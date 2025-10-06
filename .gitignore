@@ -1,0 +1,30 @@
+# python bytecode files
+__pycache__ # git rm -r --cached __pycache__
+**/__pycache__/
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# jypyter stuff
+notebooks/
+.ipynb_checkpoints
+*.ipynb
+
+# log files
+*.stdout
+*.log
+
+# scripts
+/*.py
+/*.sh
+
+# directories
+sim_scripts
+wandb
+data
+
+# figures
+*.png
+
