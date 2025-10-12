@@ -19,6 +19,7 @@ notebooks/
 # scripts
 /*.py
 /*.sh
+!build_env.sh
 
 # directories
 sim_scripts

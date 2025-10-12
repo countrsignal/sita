@@ -10,8 +10,8 @@ name: aita
 channels:
   - nvidia
   - pytorch
-  - conda-forge
   - defaults
+  - conda-forge
 
 # it is strongly recommended to specify versions of packages installed through conda
 # to avoid situation when version-unspecified packages install their latest major
@@ -24,9 +24,7 @@ channels:
 dependencies:
   - python=3.10
   - pytorch=2.4.1
-  - torchvision
-  - lightning=2.*
-  - torchmetrics=0.*
+  - pytorch-cuda=12.4
   - cuda-version=12
   - hydra-core=1.*
   - rich=13.*
@@ -37,20 +35,15 @@ dependencies:
 
   - pip>=23
   - pip:
+      - pot
+      - wandb
       - mdtraj
+      - py3Dmol
+      - torch-ema
       - hydra-optuna-sweeper
       - hydra-colorlog
       - rootutils
       - einops
-      - ipdb
-      - tqdm
-      - torchdata
-      - torchsde
-      - torchdiffeq
-      - torchcfm
-      - black
-      - flake8
-      - isort
       - ipython
       - notebook
       - git+https://github.com/atong01/bgflow.git
@@ -58,11 +51,8 @@ dependencies:
       - scikit-learn
       - scipy
       - matplotlib<3.10 #3.10 gives
-      #AttributeError: 'FigureCanvasInterAgg' object has no attribute 'tostring_rgb'. Did you mean: 'tostring_argb'?
-      - deeptime
       # dit requires
       # --no-build-isolation flash-attn
+      - deeptime
       - huggingface_hub
-      - torchtune
-      - torchao
       - openmm[cuda12]
