@@ -10,10 +10,11 @@ defaults:
   - override /scheduler: reduce_on_plateau
   - override /flow: vector_field
 
+seed: 12345
+
+task_name: "pretrain_flow_adp_temp"
 
 tags: ["Pretrain", "Flow", "ADP", "Temperature"]
-
-seed: 12345
 
 logger:
   wandb:

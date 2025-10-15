@@ -54,12 +54,12 @@ class PreTrainerFlow(LightningModule):
         log.log(20, "Interpolant Initialized.")
 
         # Setup model
-        self.model = hydra.utils.instantiate(self.hparams.model)
+        self.flow = hydra.utils.instantiate(self.hparams.model)
         log.log(20, "Model Initialized.")
 
         # Exponential moving average
         if self.hparams.ema_decay > 0:
-            self.ema = hydra.utils.instantiate(self.hparams.ema, parameters=self.model.parameters())
+            self.ema = hydra.utils.instantiate(self.hparams.ema, parameters=self.flow.parameters())
             log.log(20, "Training with EMA.")
         else:
             self.ema = None
@@ -69,7 +69,7 @@ class PreTrainerFlow(LightningModule):
         return self.dataset.get_train_dataloader(self.hparams.loader.batch_size, self.hparams.loader.num_workers, self.hparams.loader.pin_memory)
 
     def configure_optimizers(self):
-        optimizer = hydra.utils.instantiate(self.hparams.optimizer, params=self.model.parameters())
+        optimizer = hydra.utils.instantiate(self.hparams.optimizer, params=self.flow.parameters())
         scheduler = hydra.utils.instantiate(self.hparams.scheduler, optimizer=optimizer)
         return [optimizer], [scheduler]
     
@@ -77,7 +77,7 @@ class PreTrainerFlow(LightningModule):
         # sample interpolants plan
         batch = self.interpolant.plan(batch)
         # predict velocity
-        velocity = self.model(batch)
+        velocity = self.flow(batch)
         # compute loss
         batch.ndata["loss_per_node"] = torch.square(velocity - batch.ndata["vt"]).mean(dim=-1)
         loss_per_mol = dgl.mean_nodes(batch, "loss_per_node")
