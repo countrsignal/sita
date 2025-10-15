@@ -1,0 +1,3 @@
+_target_: torch_ema.ExponentialMovingAverage
+decay: 0.999
+use_num_updates: true

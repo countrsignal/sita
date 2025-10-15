@@ -74,15 +74,14 @@ class GVP_vector_field(nn.Module):
 
     def forward(
         self,
-        t: torch.Tensor,
-        data: dgl.DGLGraph,
+        graph: dgl.DGLGraph,
         condition: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """Run the vector field forward pass.
 
         Args:
             t: Diffusion timestep of shape `(batch_size,)`.
-            data: Batched DGL graph with node features `ndata['h']` `(num_nodes, n_features)`
+            graph: Batched DGL graph with node features `ndata['h']` `(num_nodes, n_features)`
                 and coordinates `ndata['x']` `(num_nodes, 3)`.
             condition: Optional conditioning tensor broadcastable per node.
 
@@ -90,26 +89,26 @@ class GVP_vector_field(nn.Module):
             Vector field predictions of shape `(num_nodes, 3)`.
         """
 
-        x_init = data.ndata["x"].clone()  # (num_nodes, 3)
+        x_init = graph.ndata["x"]  # (num_nodes, 3)
         device = x_init.device
         v_init = torch.zeros(
-            data.num_nodes(),
+            graph.num_nodes(),
             self.n_vec_channels,
             3,
             device=device,
         )  # (num_nodes, n_vec_channels, 3)
 
-        ts = t.repeat_interleave(data.batch_num_nodes()).view(-1, 1)
+        ts = graph.ndata["t"].view(-1, 1)
         # ts: (num_nodes, 1)
 
-        z_init = torch.cat([data.ndata["h"], ts], dim=1)
+        z_init = torch.cat([graph.ndata["h"], ts], dim=1)
         # z_init: (num_nodes, n_features + 1)
 
         zs = self.initial_embedding(z_init)
         # zs: (num_nodes, n_hidden)
 
         if condition is not None and self.self_conditioning:
-            z_cond = data.ndata["h"].clone().float()
+            z_cond = graph.ndata["h"].clone().float()
             # z_cond: (num_nodes, n_features)
 
             z_cond = self.conditional_embedding(z_cond)
@@ -119,7 +118,7 @@ class GVP_vector_field(nn.Module):
             # v_cond: (num_nodes, n_vec_channels, 3)
 
             h_cond, v_cond, _ = self.conditional_convolution(
-                data,
+                graph,
                 z_cond,
                 condition,
                 v_cond,
@@ -130,7 +129,7 @@ class GVP_vector_field(nn.Module):
 
         hs, vs, xs = zs, v_init, x_init
         for conv in self.convs:
-            hs, vs, xs = conv(data, hs, xs, vs)
+            hs, vs, xs = conv(graph, hs, xs, vs)
             # hs: (num_nodes, n_hidden)
             # vs: (num_nodes, n_vec_channels, 3)
             # xs: (num_nodes, 3)

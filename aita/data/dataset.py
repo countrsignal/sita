@@ -181,3 +181,13 @@ class MolecularGraphDataset(dgl.data.DGLDataset):
         g.ndata["h"] = h
         g.ndata["x"] = x
         return g
+    
+    def get_train_dataloader(self, batch_size: int, num_workers: int = 0, pin_memory: bool = False) -> dgl.dataloading.GraphDataLoader:
+        return dgl.dataloading.GraphDataLoader(
+            self,
+            batch_size=batch_size,
+            shuffle=True,
+            drop_last=True,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+        )

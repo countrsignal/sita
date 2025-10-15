@@ -1,0 +1,8 @@
+_target_: aita.interpolants.Interpolant
+integrator: "ode-dopri5"
+n_timesteps: 100
+rtol: 1e-5
+atol: 1e-5
+defaults:
+  - plan:
+    - trig

@@ -1,0 +1,11 @@
+_target_: aita.models.vector_field.GVP_vector_field
+n_features: 21
+n_layers: 5
+n_hidden: 64
+n_vec: 16
+n_message_gvps: 1
+n_update_gvps: 1
+n_coord_gvps: 1
+use_dst_feats: false
+vector_gating: true
+self_conditioning: false

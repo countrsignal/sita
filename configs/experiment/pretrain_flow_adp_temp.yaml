@@ -1,0 +1,28 @@
+# @package _global_
+
+# to execute this experiment run:
+# python train.py experiment=example
+
+# all parameters below will be merged with parameters from default configurations set above
+# this allows you to overwrite only specified parameters
+defaults:
+  - override /optimizer: adam
+  - override /scheduler: reduce_on_plateau
+  - override /flow: vector_field
+
+
+tags: ["Pretrain", "Flow", "ADP", "Temperature"]
+
+seed: 12345
+
+logger:
+  wandb:
+    tags: ${tags}
+    group: "flow"
+
+dataset:
+  - param: "1200K"
+  - anneal_type: "temperature"
+
+optimizer:
+  lr: 5e-4

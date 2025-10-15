@@ -40,16 +40,17 @@ dependencies:
       - mdtraj
       - py3Dmol
       - torch-ema
-      - hydra-optuna-sweeper
+      - torchdiffeq
       - hydra-colorlog
+      - hydra-optuna-sweeper
+      - hydra-submitit-launcher
       - rootutils
       - einops
       - ipython
       - notebook
       - git+https://github.com/atong01/bgflow.git
-      - hydra-submitit-launcher
-      - scikit-learn
       - scipy
+      - scikit-learn
       - matplotlib<3.10 #3.10 gives
       # dit requires
       # --no-build-isolation flash-attn

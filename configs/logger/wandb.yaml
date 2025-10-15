@@ -1,0 +1,15 @@
+# https://wandb.ai
+# Set `~wandb` or `wandb=null` or `wandb.mode=disabled` to disable logging
+wandb:
+  _target_: lightning.pytorch.loggers.wandb.WandbLogger
+  save_dir: "${paths.output_dir}"
+  offline: false
+  id: null # pass correct id to resume experiment!
+  anonymous: null # enable anonymous logging
+  project: "aita"
+  log_model: False # upload lightning ckpts
+  prefix: "" # a string to put at the beginning of metric keys
+  entity: ${oc.env:WANDB_ENTITY} # set to name of your wandb team
+  job_type: "training"
+  group: ""
+  tags: []

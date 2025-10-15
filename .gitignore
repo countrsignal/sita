@@ -22,10 +22,10 @@ notebooks/
 !build_env.sh
 
 # directories
+experimental_results
 sim_scripts
 wandb
 data
 
 # figures
 *.png
-
