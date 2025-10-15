@@ -22,7 +22,7 @@ notebooks/
 !build_env.sh
 
 # directories
-script/logs/
+scripts/logs/
 experimental_results
 sim_scripts
 wandb
