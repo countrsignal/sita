@@ -71,7 +71,20 @@ class PreTrainerFlow(LightningModule):
     def configure_optimizers(self):
         optimizer = hydra.utils.instantiate(self.hparams.optimizer, params=self.flow.parameters())
         scheduler = hydra.utils.instantiate(self.hparams.scheduler, optimizer=optimizer)
-        return [optimizer], [scheduler]
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                "monitor": "pretrain/flow/loss",  # make sure this matches exactly what you log
+                "interval": "epoch",              # optional: how often to step the scheduler
+                "frequency": 1,
+            },
+        }
+
+    def on_fit_start(self) -> None:
+        super().on_fit_start()
+        if self.ema is not None:
+            self.ema.to(self.device)
     
     def training_step(self, batch: dgl.DGLGraph, batch_idx: int) -> Tensor:
         # sample interpolants plan
@@ -89,6 +102,7 @@ class PreTrainerFlow(LightningModule):
             on_step=False,
             on_epoch=True,
             prog_bar=True,
+            batch_size=batch.batch_size,
             )
         return loss
     

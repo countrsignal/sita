@@ -22,8 +22,8 @@ logger:
     group: "flow"
 
 dataset:
-  - param: "1200K"
-  - anneal_type: "temperature"
+  param: "1200K"
+  anneal_type: "temperature"
 
 optimizer:
   lr: 5e-4

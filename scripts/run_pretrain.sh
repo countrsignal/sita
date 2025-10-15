@@ -2,14 +2,14 @@
 #SBATCH --job-name=AITA_pretrain
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:1
-#SBATCH --ntasks-per-node=1
+#SBATCH --ntasks-per-node=6
 #SBATCH --exclude=g017
 #SBATCH --time=0-08:00:00
 #SBATCH --partition=koes_gpu
 #SBATCH --mem=100G
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=dap181@pitt.edu
-#SBATCH --output=/net/pulsar/home/koes/dap181/labspace/aita/scripts/logs/aita-pretrain-%A_%a.out
+#SBATCH --output=/net/pulsar/home/koes/dap181/labspace/aita/scripts/logs/aita-pretrain-flow.out
 
 
 ############################
@@ -23,8 +23,14 @@ micromamba activate aita
 ##         Globals        ##
 ############################
 USERNAME="countrsignal"
-SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
-PROJECT_ROOT=$(dirname "$SCRIPT_DIR")
+
+if [ -n "$SLURM_SUBMIT_DIR" ]; then
+    PROJECT_ROOT=$(realpath "$SLURM_SUBMIT_DIR")
+else
+    SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
+    PROJECT_ROOT=$(dirname "$SCRIPT_DIR")
+fi
+
 PRETRAIN_SCRIPT="$PROJECT_ROOT/pretrain.py"
 
 cd "$PROJECT_ROOT"

@@ -6,7 +6,11 @@ from typing import Union
 from functools import partial
 from abc import ABC, abstractmethod
 
-from ..utils.graph_utils import fully_connected_edges, get_batch_indices, scatter_center_mol
+from .utils.logging import RankedLogger
+from .utils.graph_utils import fully_connected_edges, get_batch_indices, scatter_center_mol
+
+
+log = RankedLogger(__name__, on_rank_zero=True)
 
 
 ###################################
@@ -30,11 +34,11 @@ class Plan(ABC):
         pass
 
     @abstractmethod
-    def sample_times(self, g: dgl.DGLGraph) -> torch.Tensor:
+    def __call__(self, g: dgl.DGLGraph) -> torch.Tensor:
         pass
 
     @abstractmethod
-    def plan(self, g: dgl.DGLGraph) -> torch.Tensor:
+    def sample_times(self, g: dgl.DGLGraph) -> torch.Tensor:
         pass
 
     @abstractmethod
@@ -53,6 +57,7 @@ class Plan(ABC):
 class TrigPlan(Plan):
 
     def __init__(self):
+        super().__init__()
         self.alpha_t = lambda t: torch.sin(t * torch.pi / 2)
         self.sigma_t = lambda t: torch.cos(t * torch.pi / 2)
         self.d_alpha_t = lambda t: torch.pi / 2 * torch.cos(t * torch.pi / 2)
@@ -62,9 +67,6 @@ class TrigPlan(Plan):
     ############################################################################################################################
     # methods for training time utils 
     ############################################################################################################################
-    def sample_times(self, g: dgl.DGLGraph) -> torch.Tensor:
-        t = torch.rand(g.batch_size)
-        return t.repeat_interleave(g.batch_num_nodes())
     
     @torch.no_grad()
     def __call__(self, g: dgl.DGLGraph) -> dgl.DGLGraph:
@@ -75,8 +77,10 @@ class TrigPlan(Plan):
         batch_index = get_batch_indices(g)
         z = scatter_center_mol(z, batch_index)
         # sample x(t)
+        t = expand_t_like(t, g.ndata["x"])
         alpha_t = self.alpha_t(t)
         sigma_t = self.sigma_t(t)
+
         xt = alpha_t * g.ndata["x"] + sigma_t * z
         # sample velocity(t, x)
         d_alpha_t = self.d_alpha_t(t)
@@ -89,6 +93,10 @@ class TrigPlan(Plan):
         g.ndata["vt"] = vt
         g.ndata["sigma_t"] = sigma_t
         return g
+
+    def sample_times(self, g: dgl.DGLGraph) -> torch.Tensor:
+        t = torch.rand(g.batch_size, device=g.device)
+        return t.repeat_interleave(g.batch_num_nodes())
 
     #############################################################################################################################
     # methods for test-time sampling utils

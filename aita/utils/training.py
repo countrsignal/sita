@@ -185,9 +185,12 @@ def log_hyperparameters(object_dict: Dict[str, Any]) -> None:
         hparams[key] = cfg[key]
     hparams = assort_model_params(hparams, models_dict)
 
-    hparams["dataset"] = cfg["dataset"]
     hparams["trainer"] = cfg["trainer"]
-    hparams["energy"]  = cfg["energy"]
+    if "dataset" in cfg.keys():
+        hparams["dataset"] = cfg["dataset"]
+    if "energy" in cfg.keys():
+        hparams["energy"]  = cfg["energy"]
+
 
     hparams["callbacks"] = cfg.get("callbacks")
     hparams["task_name"] = cfg.get("task_name")

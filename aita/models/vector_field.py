@@ -98,7 +98,7 @@ class GVP_vector_field(nn.Module):
             device=device,
         )  # (num_nodes, n_vec_channels, 3)
 
-        ts = graph.ndata["t"].view(-1, 1)
+        ts = graph.ndata["t"]
         # ts: (num_nodes, 1)
 
         z_init = torch.cat([graph.ndata["h"], ts], dim=1)

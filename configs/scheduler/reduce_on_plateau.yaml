@@ -2,7 +2,6 @@ _target_: torch.optim.lr_scheduler.ReduceLROnPlateau
 mode: min
 factor: 0.5
 patience: 30
-verbose: True
 threshold: 1e-4
 threshold_mode: rel
 cooldown: 0
