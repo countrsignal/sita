@@ -12,7 +12,7 @@ defaults:
 
 seed: 12345
 
-task_name: "pretrain_flow_adp_temp"
+task_name: "pretrain_flow"
 
 tags: ["Pretrain", "Flow", "ADP", "Temperature"]
 

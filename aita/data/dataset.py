@@ -126,7 +126,7 @@ class MolecularGraphDataset(dgl.data.DGLDataset):
         self.anneal_type = anneal_type
         self.param = param
         self.molecules = [
-            file.name.strip(".pdb") for file in (self.data_path / "pdbs").glob("*.pdb")
+            file.stem for file in (self.data_path / "pdbs").glob("*.pdb")
         ]
         self.atom_types_encoding = np.load(
             self.data_path / "atom_types_encoding.npy",

@@ -54,11 +54,11 @@ class PreTrainerFlow(LightningModule):
         log.log(20, "Interpolant Initialized.")
 
         # Setup model
-        self.flow = hydra.utils.instantiate(self.hparams.model)
+        self.flow = hydra.utils.instantiate(self.hparams.flow)
         log.log(20, "Model Initialized.")
 
         # Exponential moving average
-        if self.hparams.ema_decay > 0:
+        if self.hparams.ema.decay > 0:
             self.ema = hydra.utils.instantiate(self.hparams.ema, parameters=self.flow.parameters())
             log.log(20, "Training with EMA.")
         else:

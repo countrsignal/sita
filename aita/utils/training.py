@@ -46,7 +46,7 @@ def task_wrapper(task_func: Callable) -> Callable:
     def wrap(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         # execute the task
         try:
-            metric_dict, object_dict = task_func(cfg=cfg)
+            _ = task_func(cfg=cfg)
 
         # things to do if exception occurs
         except Exception as ex:
@@ -71,7 +71,7 @@ def task_wrapper(task_func: Callable) -> Callable:
                     log.log(20, "Closing wandb!")
                     wandb.finish()
 
-        return metric_dict, object_dict
+        return _
 
     return wrap
 
@@ -146,6 +146,19 @@ def instantiate_loggers(logger_cfg: DictConfig) -> List[Logger]:
     return logger
 
 
+def assort_model_params(hparams: Dict[str, Any], models: Dict[str, Any]):
+    for key, model in models.items():
+        # save number of model parameters
+        hparams[f"{key}/params/total"] = sum(p.numel() for p in model.parameters())
+        hparams[f"{key}/params/trainable"] = sum(
+            p.numel() for p in model.parameters() if p.requires_grad
+        )
+        hparams[f"{key}/params/non_trainable"] = sum(
+            p.numel() for p in model.parameters() if not p.requires_grad
+        )
+    return hparams
+
+
 @rank_zero_only
 def log_hyperparameters(object_dict: Dict[str, Any]) -> None:
     """Controls which config parts are saved by Lightning loggers.
@@ -161,30 +174,20 @@ def log_hyperparameters(object_dict: Dict[str, Any]) -> None:
     hparams = {}
 
     cfg = OmegaConf.to_container(object_dict["cfg"])
-    model = object_dict["model"]
     trainer = object_dict["trainer"]
+    models_dict = object_dict["model"]
 
     if not trainer.logger:
         log.log(30, "Logger not found! Skipping hyperparameter logging...")
         return
 
-    hparams["model"] = cfg["sde"]
-
-    # save number of model parameters
-    hparams["model/params/total"] = sum(p.numel() for p in model.parameters())
-    hparams["model/params/trainable"] = sum(
-        p.numel() for p in model.parameters() if p.requires_grad
-    )
-    hparams["model/params/non_trainable"] = sum(
-        p.numel() for p in model.parameters() if not p.requires_grad
-    )
+    for key in models_dict.keys():
+        hparams[key] = cfg[key]
+    hparams = assort_model_params(hparams, models_dict)
 
     hparams["dataset"] = cfg["dataset"]
     hparams["trainer"] = cfg["trainer"]
-
-    hparams["prior"] = cfg["prior"]
-    hparams["energy_function"] = cfg["energy"]
-    hparams["metropolis_hastings"] = cfg["metropolis_hastings"] 
+    hparams["energy"]  = cfg["energy"]
 
     hparams["callbacks"] = cfg.get("callbacks")
     hparams["task_name"] = cfg.get("task_name")

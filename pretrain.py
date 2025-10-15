@@ -18,7 +18,7 @@ from lightning import Callback, Trainer
 rootutils.setup_root(__file__, indicator="aita", pythonpath=True)
 
 
-from aita.training.pretrain_flow import PretrainFlow
+from aita.training.pretrain_flow import PreTrainerFlow
 from aita.utils.logging import RankedLogger
 from aita.utils.configs import print_config
 from aita.utils.training import (
@@ -52,7 +52,7 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         L.seed_everything(cfg.seed, workers=True)
 
     log.log(20, f"Instantiating LitBootstrap module...")
-    model: PretrainFlow = PretrainFlow(cfg)
+    model: PreTrainerFlow = PreTrainerFlow(cfg)
 
     log.log(20, "Instantiating callbacks...")
     callbacks: List[Callback] = instantiate_callbacks(cfg.get("callbacks"))
@@ -65,7 +65,7 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
 
     object_dict = {
         "cfg": cfg,
-        "model": model,
+        "model": {"flow": model.flow},
         "callbacks": callbacks,
         "logger": logger,
         "trainer": trainer,
