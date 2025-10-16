@@ -1,13 +1,19 @@
 import dgl
 import torch
 from torchdiffeq import odeint_adjoint
+from scipy.optimize import linear_sum_assignment
 
 from typing import Union
 from functools import partial
 from abc import ABC, abstractmethod
 
 from .utils.logging import RankedLogger
-from .utils.graph_utils import fully_connected_edges, get_batch_indices, scatter_center_mol
+from .utils.graph_utils import (
+    fully_connected_edges,
+    scatter_center_mol,
+    flatten_along_spatial,
+    flatten_along_batch,
+)
 
 
 log = RankedLogger(__name__, on_rank_zero=True)
@@ -23,6 +29,14 @@ def expand_t_like(t: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
     t = t.view(t.size(0), *dims)
     return t
 
+def ot_coupling(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+    C = torch.cdist(x, y)
+    C = C**2
+    C = C / C.max()
+    C = C.numpy() # we assume x and y are on CPU
+    row_ind, col_ind = linear_sum_assignment(C)
+    return x[row_ind], y[col_ind]
+
 
 ###################################
 # classes
@@ -30,8 +44,26 @@ def expand_t_like(t: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
 
 class Plan(ABC):
 
-    def __init__(self):
-        pass
+    def __init__(self, coupling_plan: str = "ic"):
+        # coupling_plan: Specifies how to align or couple the initial and target structures:
+        #   - "ic": "independent coupling" (no matching between atoms, noise added independently),
+        #   - "ot": "optimal transport" (matches atoms between structures using optimal transport theory),
+        #   - "ku": "Kabsch-Umeyama" (aligns structures using the Kabsch-Umeyama algorithm for optimal rotation/translation).
+        assert coupling_plan in ["ic", "ot", "ku"], f"Invalid coupling plan: {coupling_plan}. Valid plans: ic, ot"
+        self.coupling_plan = coupling_plan
+    
+    def compute_coupling(self, x: torch.Tensor, y: torch.Tensor, g: dgl.DGLGraph) -> torch.Tensor:
+        if self.coupling_plan == "ot":
+            x = flatten_along_spatial(x, g)
+            y = flatten_along_spatial(y, g)
+            x, y = ot_coupling(x, y)
+            x = flatten_along_batch(x, g)
+            y = flatten_along_batch(y, g)
+            return x, y
+        elif self.coupling_plan == "ku":
+            raise NotImplementedError("Kabsch-Umeyama coupling is not implemented yet.")
+        else:
+            return x, y
 
     @abstractmethod
     def __call__(self, g: dgl.DGLGraph) -> torch.Tensor:
@@ -56,8 +88,8 @@ class Plan(ABC):
 
 class TrigPlan(Plan):
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, coupling_plan: str):
+        super().__init__(coupling_plan)
         self.alpha_t = lambda t: torch.sin(t * torch.pi / 2)
         self.sigma_t = lambda t: torch.cos(t * torch.pi / 2)
         self.d_alpha_t = lambda t: torch.pi / 2 * torch.cos(t * torch.pi / 2)
@@ -71,27 +103,33 @@ class TrigPlan(Plan):
     @torch.no_grad()
     def __call__(self, g: dgl.DGLGraph) -> dgl.DGLGraph:
         # sample times and noise
+        x = g.ndata.pop("x")
         t = self.sample_times(g)
-        t = expand_t_like(t, g.ndata["x"])
-        z = torch.randn_like(g.ndata["x"])
+        t = expand_t_like(t, x)
+        z = torch.randn_like(x)
         
         # remove center of mass
-        batch_index = get_batch_indices(g)
-        z = scatter_center_mol(z, batch_index)
+        z = scatter_center_mol(z, g)
+
+        # compute coupling
+        if self.coupling_plan == "ot":
+            # NOTE: only use OT when all molecules in the dataset have the same number of atoms
+            x, z = self.compute_coupling(x, z, g)
         
         # sample x(t)
         alpha_t = self.alpha_t(t)
         sigma_t = self.sigma_t(t)
-        xt = alpha_t * g.ndata["x"] + sigma_t * z
+        xt = alpha_t * x + sigma_t * z
         
         # sample velocity(t, x)
         d_alpha_t = self.d_alpha_t(t)
         d_sigma_t = self.d_sigma_t(t)
-        vt = d_alpha_t * g.ndata["x"] + d_sigma_t * z
+        vt = d_alpha_t * x + d_sigma_t * z
         
         # package in DGLGraph
         g.ndata["t"]  = t
         g.ndata["z"]  = z
+        g.ndata["x"]  = x
         g.ndata["xt"] = xt
         g.ndata["vt"] = vt
         g.ndata["sigma_t"] = sigma_t
@@ -142,7 +180,7 @@ class Interpolant:
 
     def __init__(
         self,
-        plan: Plan = TrigPlan(),
+        plan: Plan,
         integrator: str = "ode-dopri5",
         n_timesteps: int = 100,
         rtol: float = 1e-5,
@@ -199,14 +237,13 @@ class Interpolant:
         g.set_batch_num_nodes(torch.full((batch_size,), n_atoms, dtype=torch.int64))
         g.set_batch_num_edges(torch.full((batch_size,), per_graph, dtype=torch.int64))
         g.ndata["h"] = categorical_features.repeat(batch_size, 1)
-        batch_index = get_batch_indices(g)
 
         # Move data to device
         g = g.to(device)
 
         # Prepare the ODE integrator
         x_init = torch.randn((batch_size * n_atoms, 3))
-        x_init = scatter_center_mol(x_init, batch_index)
+        x_init = scatter_center_mol(x_init, g)
         x_init = x_init.view(batch_size, n_atoms * 3).to(device)
         time_span = torch.linspace(0.0, 1.0, self.n_timesteps + 1, device=device)
         forward_fn = partial(self.ode_forward, g=g, model=model)

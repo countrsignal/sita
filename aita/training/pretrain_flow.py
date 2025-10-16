@@ -86,10 +86,16 @@ class PreTrainerFlow(LightningModule):
                 # if allow_different_devices is False
                 # # then the ema model must be on the same device as the model
                 self.ema.to(self.device)
-    
-    def training_step(self, batch: dgl.DGLGraph, batch_idx: int) -> Tensor:
-        # sample interpolants plan
+
+    def on_before_batch_transfer(self, batch: dgl.DGLGraph, dataloader_idx: int) -> dgl.DGLGraph:
+        # NOTE: we perform all the necessary data transformations here on CPU
+        # > sample interpolants plan
         batch = self.interpolant.plan(batch)
+        return batch
+
+    def training_step(self, batch: dgl.DGLGraph, batch_idx: int) -> Tensor:
+        # transfer batch to device
+        batch = batch.to(self.device)
         # predict velocity
         velocity = self.flow(batch)
         # compute loss
