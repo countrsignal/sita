@@ -72,20 +72,23 @@ class TrigPlan(Plan):
     def __call__(self, g: dgl.DGLGraph) -> dgl.DGLGraph:
         # sample times and noise
         t = self.sample_times(g)
+        t = expand_t_like(t, g.ndata["x"])
         z = torch.randn_like(g.ndata["x"])
+        
         # remove center of mass
         batch_index = get_batch_indices(g)
         z = scatter_center_mol(z, batch_index)
+        
         # sample x(t)
-        t = expand_t_like(t, g.ndata["x"])
         alpha_t = self.alpha_t(t)
         sigma_t = self.sigma_t(t)
-
         xt = alpha_t * g.ndata["x"] + sigma_t * z
+        
         # sample velocity(t, x)
         d_alpha_t = self.d_alpha_t(t)
         d_sigma_t = self.d_sigma_t(t)
         vt = d_alpha_t * g.ndata["x"] + d_sigma_t * z
+        
         # package in DGLGraph
         g.ndata["t"]  = t
         g.ndata["z"]  = z
@@ -179,6 +182,7 @@ class Interpolant:
         assert self.int_type == "ode", f"The integrator type must be 'ode' for this method. Got {self.int_type}."
         # model device
         device = next(model.parameters()).device
+
         # create a graph with the given categorical features
         # we should have a batch size of batch_size * num_nodes
         n_atoms = categorical_features.size(0)
@@ -188,8 +192,8 @@ class Interpolant:
         offset = torch.arange(batch_size) * n_atoms
         src = src.repeat(batch_size) + offset.repeat_interleave(per_graph)
         dst = dst.repeat(batch_size) + offset.repeat_interleave(per_graph)
-
         g = dgl.graph((src, dst), num_nodes=batch_size * n_atoms)
+
         # NOTE: dgl.graph always creates a single-graph object,
         # so batch_size defaults to 1 unless you tell DGL how many graphs you batched together
         g.set_batch_num_nodes(torch.full((batch_size,), n_atoms, dtype=torch.int64))
@@ -206,6 +210,7 @@ class Interpolant:
         x_init = x_init.view(batch_size, n_atoms * 3).to(device)
         time_span = torch.linspace(0.0, 1.0, self.n_timesteps + 1, device=device)
         forward_fn = partial(self.ode_forward, g=g, model=model)
+
         # integrate the ODE
         xs = odeint_adjoint(forward_fn, x_init, time_span, method=self.method, rtol=self.rtol, atol=self.atol, adjoint_params=())
         return xs[-1].view(batch_size, n_atoms, 3)

@@ -7,8 +7,6 @@ from torch import Tensor
 from torch.optim import Adam
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
-from torch_ema import ExponentialMovingAverage
-
 from lightning import LightningModule
 from lightning.pytorch.loggers import WandbLogger
 
@@ -58,8 +56,8 @@ class PreTrainerFlow(LightningModule):
         log.log(20, "Model Initialized.")
 
         # Exponential moving average
-        if self.hparams.ema.decay > 0:
-            self.ema = hydra.utils.instantiate(self.hparams.ema, parameters=self.flow.parameters())
+        if "ema" in self.hparams:
+            self.ema = hydra.utils.instantiate(self.hparams.ema, model=self.flow)
             log.log(20, "Training with EMA.")
         else:
             self.ema = None
@@ -84,7 +82,10 @@ class PreTrainerFlow(LightningModule):
     def on_fit_start(self) -> None:
         super().on_fit_start()
         if self.ema is not None:
-            self.ema.to(self.device)
+            if not self.ema.allow_different_devices:
+                # if allow_different_devices is False
+                # # then the ema model must be on the same device as the model
+                self.ema.to(self.device)
     
     def training_step(self, batch: dgl.DGLGraph, batch_idx: int) -> Tensor:
         # sample interpolants plan

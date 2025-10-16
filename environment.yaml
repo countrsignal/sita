@@ -39,7 +39,6 @@ dependencies:
       - wandb
       - mdtraj
       - py3Dmol
-      - torch-ema
       - torchdiffeq
       - hydra-colorlog
       - hydra-optuna-sweeper

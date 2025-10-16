@@ -1,3 +1,5 @@
-_target_: torch_ema.ExponentialMovingAverage
-decay: 0.999
-use_num_updates: true
+_target_: aita.models.components.ema.EMA
+beta: 0.999
+update_every: 10
+allow_different_devices: True
+update_model_with_ema_every: null

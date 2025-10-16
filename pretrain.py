@@ -83,7 +83,7 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     log.log(20, "Saving model checkpoints...")
     torch.save(model.flow.state_dict(), os.path.join(cfg.paths.output_dir, "model.pth"))
     if model.ema is not None:
-        torch.save(model.ema.state_dict(), os.path.join(cfg.paths.output_dir, "ema_model.pth"))
+        torch.save(model.ema.ema_model.state_dict(), os.path.join(cfg.paths.output_dir, "ema_model.pth"))
 
     return None
 
