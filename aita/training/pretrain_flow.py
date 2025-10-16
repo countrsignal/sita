@@ -93,9 +93,7 @@ class PreTrainerFlow(LightningModule):
         # predict velocity
         velocity = self.flow(batch)
         # compute loss
-        batch.ndata["loss_per_node"] = torch.square(velocity - batch.ndata["vt"]).mean(dim=-1)
-        loss_per_mol = dgl.mean_nodes(batch, "loss_per_node")
-        loss = loss_per_mol.mean()
+        loss = torch.square(velocity - batch.ndata["vt"]).mean()
         # log loss
         self.log(
             "pretrain/flow/loss",
