@@ -9,7 +9,7 @@
 #SBATCH --mem=100G
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=dap181@pitt.edu
-#SBATCH --output=/net/pulsar/home/koes/dap181/labspace/aita/scripts/logs/aita-pretrain-flow.out
+#SBATCH --output=/net/pulsar/home/koes/dap181/labspace/aita/scripts/logs/aita-pretrain-flow-com.out
 
 
 ############################
@@ -45,7 +45,7 @@ echo "WANDB_ENTITY='${USERNAME}'" > .env
 ## Launch Training Script ##
 ############################
 echo "Launching training script..."
-python "$PRETRAIN_SCRIPT" experiment=pretrain_flow_adp_temp trainer.max_epochs=20
+python "$PRETRAIN_SCRIPT" experiment=pretrain_flow_adp_temp trainer.max_epochs=100
 
 echo "Training COMPLETE."
 exit 0

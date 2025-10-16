@@ -89,7 +89,7 @@ class GVP_vector_field(nn.Module):
             Vector field predictions of shape `(num_nodes, 3)`.
         """
 
-        x_init = graph.ndata["x"]  # (num_nodes, 3)
+        x_init = graph.ndata["xt"]  # (num_nodes, 3)
         device = x_init.device
         v_init = torch.zeros(
             graph.num_nodes(),

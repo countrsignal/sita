@@ -103,7 +103,7 @@ class TrigPlan(Plan):
     @torch.no_grad()
     def __call__(self, g: dgl.DGLGraph) -> dgl.DGLGraph:
         # sample times and noise
-        x = g.ndata.pop("x")
+        x = g.ndata.pop("x") # NOTE: this is the clean data point x1 (without noise)
         t = self.sample_times(g)
         t = expand_t_like(t, x)
         z = torch.randn_like(x)
@@ -154,7 +154,7 @@ class TrigPlan(Plan):
         alpha_ratio = self.d_alpha_alpha_ratio_t(t)
         return alpha_ratio * (sigma_t ** 2) - sigma_t * d_sigma_t
 
-    def get_score_from_velocity(self, t: torch.Tensor, g: dgl.DGLGraph, velocity: torch.Tensor) -> torch.Tensor:
+    def get_score_from_velocity(self, t: torch.Tensor, x: torch.Tensor, velocity: torch.Tensor) -> torch.Tensor:
         """Wrapper function: transfrom velocity prediction model to score
         Args:
             t: [batch_dim,] time tensor
@@ -164,12 +164,12 @@ class TrigPlan(Plan):
         NOTE: this function blows up when t=1.0 !!!
 
         """
-        t = expand_t_like(t, g.ndata["x"])
+        t = expand_t_like(t, x)
         alpha_t = self.alpha_t(t)
         sigma_t = self.sigma_t(t)
         d_alpha_t = self.d_alpha_t(t)
         d_sigma_t = self.d_sigma_t(t)
-        mean = g.ndata["x"]
+        mean = x
         reverse_alpha_ratio = alpha_t / d_alpha_t
         var = sigma_t**2 - reverse_alpha_ratio * d_sigma_t * sigma_t
         score = (reverse_alpha_ratio * velocity - mean) / var
@@ -200,8 +200,8 @@ class Interpolant:
         # NOTE: this function is intended to called inside the torchdiffeq.odeint function
         # NOTE: instide the torchdiffeq.odeint function, x is a 2D tensor with shape (batch_size, num_nodes * 3)
         # NOTE: we assume the provided dgl graph already contains the categorical features
-        g.ndata["x"] = x.view(g.num_nodes(), 3) # [batch_size * num_nodes, 3]
-        g.ndata["t"] = t * torch.ones(g.num_nodes(), device=g.device)
+        g.ndata["xt"] = x.view(g.num_nodes(), 3) # [batch_size * num_nodes, 3]
+        g.ndata["t"] = t * torch.ones((g.num_nodes(), 1), device=g.device) # [batch_size * num_nodes, 1]
         velocity = model(g)
         n_paticles = g.num_nodes() // g.batch_size # it is expected that we only generate conformers for one molecular species at a time
         return velocity.view(g.batch_size, n_paticles * 3)
