@@ -3,7 +3,7 @@ import torch
 from torchdiffeq import odeint_adjoint
 from scipy.optimize import linear_sum_assignment
 
-from typing import Union
+from typing import Union, Tuple
 from functools import partial
 from abc import ABC, abstractmethod
 
@@ -29,7 +29,9 @@ def expand_t_like(t: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
     t = t.view(t.size(0), *dims)
     return t
 
-def ot_coupling(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+
+def ot_coupling(x: torch.Tensor, y: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Couple the initial and target structures using optimal transport theory."""
     C = torch.cdist(x, y)
     C = C**2
     C = C / C.max()
@@ -49,10 +51,11 @@ class Plan(ABC):
         #   - "ic": "independent coupling" (no matching between atoms, noise added independently),
         #   - "ot": "optimal transport" (matches atoms between structures using optimal transport theory),
         #   - "ku": "Kabsch-Umeyama" (aligns structures using the Kabsch-Umeyama algorithm for optimal rotation/translation).
-        assert coupling_plan in ["ic", "ot", "ku"], f"Invalid coupling plan: {coupling_plan}. Valid plans: ic, ot"
+        assert coupling_plan in ["ic", "ot", "ku"], f"Invalid coupling plan: {coupling_plan}. Valid plans: ic, ot, ku"
         self.coupling_plan = coupling_plan
     
-    def compute_coupling(self, x: torch.Tensor, y: torch.Tensor, g: dgl.DGLGraph) -> torch.Tensor:
+    def compute_coupling(self, x: torch.Tensor, y: torch.Tensor, g: dgl.DGLGraph) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Couple the initial and target structures using the specified coupling plan."""
         if self.coupling_plan == "ot":
             x = flatten_along_spatial(x, g)
             y = flatten_along_spatial(y, g)
