@@ -2,4 +2,3 @@ _target_: aita.data.dataset.MolecularGraphDataset
 data_path: ${paths.data_dir}
 param: null
 anneal_type: null
-data_scaling_factor: 10.0
