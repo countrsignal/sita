@@ -15,7 +15,7 @@ from lightning.pytorch.loggers import Logger
 from lightning import Callback, Trainer
 
 
-rootutils.setup_root(__file__, indicator="aita", pythonpath=True)
+rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
 
 
 from aita.training.pretrain_flow import PreTrainerFlow

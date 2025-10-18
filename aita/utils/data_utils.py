@@ -1,6 +1,16 @@
 import torch
 
 
+def nm_to_angstrom(x: torch.Tensor) -> torch.Tensor:
+    """Convert nanometers to angstroms."""
+    return x * 10.0
+
+
+def angstrom_to_nm(x: torch.Tensor) -> torch.Tensor:
+    """Convert angstroms to nanometers."""
+    return x / 10.0
+
+
 def remove_mean(samples, n_particles, n_dimensions):
     """Makes a configuration of many particle system mean-free.
 

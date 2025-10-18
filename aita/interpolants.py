@@ -8,6 +8,7 @@ from functools import partial
 from abc import ABC, abstractmethod
 
 from .utils.logging import RankedLogger
+from .utils.data_utils import nm_to_angstrom
 from .utils.graph_utils import (
     fully_connected_edges,
     scatter_center_mol,
@@ -55,7 +56,15 @@ class Plan(ABC):
         self.coupling_plan = coupling_plan
     
     def compute_coupling(self, x: torch.Tensor, y: torch.Tensor, g: dgl.DGLGraph) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Couple the initial and target structures using the specified coupling plan."""
+        """
+        Couple the initial and target structures using the specified coupling plan.
+        Args:
+            x: target coordinates with shape (batch_size, num_atoms, 3)
+            y: gaussian noise with shape (batch_size, num_atoms, 3)
+            g: DGLGraph of the molecule
+        Returns:
+            Tuple[torch.Tensor, torch.Tensor]: coupled coordinates with shape (batch_size, num_atoms, 3)
+        """
         if self.coupling_plan == "ot":
             x = flatten_along_spatial(x, g)
             y = flatten_along_spatial(y, g)
@@ -112,7 +121,7 @@ class TrigPlan(Plan):
         z = torch.randn_like(x)
         
         # remove center of mass
-        z = scatter_center_mol(z, g)
+        # z = scatter_center_mol(z, g)
 
         # compute coupling
         if self.coupling_plan == "ot":
@@ -132,7 +141,7 @@ class TrigPlan(Plan):
         # package in DGLGraph
         g.ndata["t"]  = t
         g.ndata["z"]  = z
-        g.ndata["x"]  = x
+        g.ndata["x"]  = nm_to_angstrom(x) # NOTE: data is in nanometers by default, so we convert to angstroms
         g.ndata["xt"] = xt
         g.ndata["vt"] = vt
         g.ndata["sigma_t"] = sigma_t
@@ -241,14 +250,18 @@ class Interpolant:
         g.set_batch_num_edges(torch.full((batch_size,), per_graph, dtype=torch.int64))
         g.ndata["h"] = categorical_features.repeat(batch_size, 1)
 
-        # Move data to device
-        g = g.to(device)
-
-        # Prepare the ODE integrator
+        # Prepare state and time variables
         x_init = torch.randn((batch_size * n_atoms, 3))
         x_init = scatter_center_mol(x_init, g)
-        x_init = x_init.view(batch_size, n_atoms * 3).to(device)
-        time_span = torch.linspace(0.0, 1.0, self.n_timesteps + 1, device=device)
+        x_init = x_init.view(batch_size, n_atoms * 3)
+        time_span = torch.linspace(0.0, 1.0, self.n_timesteps + 1)
+
+        # move data to device
+        g = g.to(device)
+        x_init = x_init.to(device)
+        time_span = time_span.to(device)
+
+        # create the forward function
         forward_fn = partial(self.ode_forward, g=g, model=model)
 
         # integrate the ODE

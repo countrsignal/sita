@@ -117,8 +117,19 @@ def categorical_featurizer(
 ###################################
 
 class MolecularGraphDataset(dgl.data.DGLDataset):
+    """
+    Dataset for molecular graphs.
+    Args:
+        data_path: path to the data directory
+        param: parameter of the anneal type
+        anneal_type: type of anneal
+    
+    NOTE: Data from MD simulation is in nanometers by default.
+          We convert to angstroms for training in aita.interpolants.Interpolant class.
+    """
 
     def __init__(self, data_path: str, param: str, anneal_type: str):
+        super().__init__()
 
         assert anneal_type in ["alchemical", "temperature"], "Anneal type must be either 'alchemical' or 'temperature'"
 
