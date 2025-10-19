@@ -22,8 +22,13 @@ def get_adp_features():
     atom_types[[1, 2, 3]] = 2
     atom_types[[19, 20, 21]] = 20
     atom_types[[11, 12, 13]] = 12
-    h_initial = torch.nn.functional.one_hot(atom_types)
-    return h_initial
+    atom_types = torch.nn.functional.one_hot(atom_types)
+    residue_type = torch.arange(22)
+    residue_type[:6] = 0
+    residue_type[6:16] = 1
+    residue_type[16:] = 2
+    residue_type = torch.nn.functional.one_hot(residue_type)
+    return torch.cat([residue_type, atom_types], dim=1)
 
 
 def _normalise_atom_name(atom_name: str, residue_code: int) -> str:
@@ -76,14 +81,12 @@ def categorical_featurizer(
     }
 
     atom_types: List[str] = []
-    residue_indices: List[int] = []
     residue_types: List[int] = []
 
     for residue_index, residue in enumerate(topology.residues):
         residue_code = amino_to_index[residue.name]
 
         for atom in residue.atoms:
-            residue_indices.append(residue_index)
             residue_types.append(residue_code)
 
             atom_name = _normalise_atom_name(atom.name, residue_code)
@@ -97,16 +100,13 @@ def categorical_featurizer(
         torch.tensor(atom_type_indices, dtype=torch.long),
         num_classes=len(atom_types_encoding),
     )
-    residue_index_one_hot = torch.nn.functional.one_hot(
-        torch.tensor(residue_indices, dtype=torch.long),
-        num_classes=topology.n_residues,
-    )
+
     residue_type_one_hot = torch.nn.functional.one_hot(
         torch.tensor(residue_types, dtype=torch.long), num_classes=20
     )
 
     features = torch.cat(
-        [residue_index_one_hot, residue_type_one_hot, atom_one_hot], dim=1
+        [residue_type_one_hot, atom_one_hot], dim=1
     )
 
     return features
@@ -129,7 +129,7 @@ class MolecularGraphDataset(dgl.data.DGLDataset):
     """
 
     def __init__(self, data_path: str, param: str, anneal_type: str):
-        super().__init__()
+        super(MolecularGraphDataset, self).__init__(name="MolecularGraphDataset")
 
         assert anneal_type in ["alchemical", "temperature"], "Anneal type must be either 'alchemical' or 'temperature'"
 
@@ -183,6 +183,7 @@ class MolecularGraphDataset(dgl.data.DGLDataset):
         return len(self.samples)
 
     def __getitem__(self, index):
+        # retrieve features and samples
         h, x = self.features[self.backmap[index]], self.samples[index]
         x = x.squeeze(0)
         # create edges for fully connected graph without self-connections
@@ -191,6 +192,8 @@ class MolecularGraphDataset(dgl.data.DGLDataset):
         g = dgl.graph(edges, num_nodes=x.shape[0])
         g.ndata["h"] = h
         g.ndata["x"] = x
+        # create positional encoding
+        g.ndata["atom_index"] = torch.arange(x.size(0))
         return g
     
     def get_train_dataloader(self, batch_size: int, num_workers: int = 0, pin_memory: bool = False) -> dgl.dataloading.GraphDataLoader:

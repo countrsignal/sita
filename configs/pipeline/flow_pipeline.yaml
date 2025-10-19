@@ -1,0 +1,6 @@
+_target_: aita.utils.pipeline.Pipeline
+data_augs:
+  - _target_: aita.utils.pipeline.GeometryDistortion
+    t_distort: 0.5
+    p_distort: 0.2
+    sigma_distort: 0.5

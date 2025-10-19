@@ -4,8 +4,10 @@ import dgl
 import torch
 from torch import nn
 
-from .gvp import GVPConv, NodePositionUpdate
 from .swish import SwishBeta
+from .layernorm import AdaLN
+from .gvp import GVPConv, NodePositionUpdate
+from .embeddings import FourierEmbedding, PositionalEncoding
 
 
 class GVP_vector_field(nn.Module):
@@ -29,8 +31,11 @@ class GVP_vector_field(nn.Module):
         self.n_vec_channels = n_vec
         self.self_conditioning = self_conditioning
 
+        self.adaln = AdaLN(n_hidden, n_hidden)
+        self.temporal_embedding = FourierEmbedding(n_hidden)
+        self.positional_embedding = PositionalEncoding(n_hidden)
         self.initial_embedding = nn.Sequential(
-            nn.Linear(n_features + 1, n_hidden),
+            nn.Linear(n_features + n_hidden, n_hidden),
             nn.SiLU(),
         )
 
@@ -98,13 +103,20 @@ class GVP_vector_field(nn.Module):
             device=device,
         )  # (num_nodes, n_vec_channels, 3)
 
-        ts = graph.ndata["t"]
-        # ts: (num_nodes, 1)
+        th = self.temporal_embedding(graph.ndata["t"].view(-1)) # NOTE: we expect the time to be a 1D tensor
+        # th: (num_nodes, n_hidden)
 
-        z_init = torch.cat([graph.ndata["h"], ts], dim=1)
+        ph = self.positional_embedding(graph.ndata["atom_index"].view(-1)) # NOTE: we expect the atom index to be a 1D tensor
+        # ph: (num_nodes, n_hidden)
+
+        z_init = torch.cat([graph.ndata["h"], ph], dim=1)
         # z_init: (num_nodes, n_features + 1)
 
         zs = self.initial_embedding(z_init)
+        # zs: (num_nodes, n_hidden)
+
+        # update zs with the time embedding
+        zs = self.adaln(zs, th)
         # zs: (num_nodes, n_hidden)
 
         if condition is not None and self.self_conditioning:

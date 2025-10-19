@@ -19,6 +19,7 @@ rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
 
 
 from aita.training.pretrain_flow import PreTrainerFlow
+from aita.training.common import fetch_wandb_logger
 from aita.utils.logging import RankedLogger
 from aita.utils.configs import print_config
 from aita.utils.training import (
@@ -59,6 +60,11 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
 
     log.log(20, "Instantiating loggers...")
     logger: List[Logger] = instantiate_loggers(cfg.get("logger"))
+    wandb_logger = fetch_wandb_logger(logger)
+    if wandb_logger is not None:
+        run = wandb_logger.experiment  # creates the run if it hasn’t started yet
+        if run is not None:
+            log.log(20, f"W&B run name: {run.name}")
 
     log.log(20, f"Instantiating trainer <{cfg.trainer._target_}>")
     trainer: Trainer = hydra.utils.instantiate(cfg.trainer, callbacks=callbacks, logger=logger)
@@ -78,12 +84,13 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     if cfg.get("train"):
         log.log(20, "Starting training!")
         trainer.fit(model=model, ckpt_path=cfg.get("ckpt_path"))
+        log.log(20, "Training complete!")
     
-    # NOTE: we save both the model and the ema model
-    log.log(20, "Saving model checkpoints...")
-    torch.save(model.flow.state_dict(), os.path.join(cfg.paths.output_dir, "model.pth"))
-    if model.ema is not None:
-        torch.save(model.ema.ema_model.state_dict(), os.path.join(cfg.paths.output_dir, "ema_model.pth"))
+        # NOTE: we save both the model and the ema model
+        log.log(20, "Saving model checkpoints...")
+        torch.save(model.flow.state_dict(), os.path.join(cfg.paths.output_dir, "model.pth"))
+        if model.ema is not None:
+            torch.save(model.ema.ema_model.state_dict(), os.path.join(cfg.paths.output_dir, "ema_model.pth"))
 
     return None
 

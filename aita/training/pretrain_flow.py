@@ -51,6 +51,14 @@ class PreTrainerFlow(LightningModule):
         self.interpolant = hydra.utils.instantiate(self.hparams.interpolant)
         log.log(20, "Interpolant Initialized.")
 
+        # Setup pipeline
+        if "pipeline" in self.hparams:
+            self.pipeline = hydra.utils.instantiate(self.hparams.pipeline)
+            log.log(20, "Pipeline Initialized.")
+        else:
+            self.pipeline = None
+            log.log(20, "Pipeline not found. Skipping pipeline.")
+
         # Setup model
         self.flow = hydra.utils.instantiate(self.hparams.flow)
         log.log(20, "Model Initialized.")
@@ -91,6 +99,9 @@ class PreTrainerFlow(LightningModule):
         # NOTE: we perform all the necessary data transformations here on CPU
         # > sample interpolants plan
         batch = self.interpolant.plan(batch)
+        # apply data pipeline
+        if self.pipeline is not None:
+            batch = self.pipeline(batch)
         return batch
 
     def training_step(self, batch: dgl.DGLGraph, batch_idx: int) -> Tensor:

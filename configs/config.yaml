@@ -8,6 +8,7 @@ defaults:
   - dataset: default
   - loader: default
   - interpolant: default
+  - pipeline: null
   - energy: null
   - flow: null
   - ebm: null

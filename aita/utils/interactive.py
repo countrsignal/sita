@@ -4,7 +4,8 @@ import numpy as np
 from typing import List, Optional, Any
 
 import hydra
-from hydra import initialize, compose
+from hydra.core.global_hydra import GlobalHydra
+from hydra import compose, initialize_config_dir
 from omegaconf import OmegaConf, DictConfig
 
 
@@ -14,12 +15,13 @@ from omegaconf import OmegaConf, DictConfig
 
 # --- configuration  and initialization ---
 def initialize_config(
-    config_path: str,
+    config_dir: str,
     config_name: str = "config.yaml",
     overrides: List[str] = [],
 ) -> DictConfig:
     """Initialize the configuration."""
-    with initialize(version_base=None, config_path=config_path):
+    GlobalHydra.instance().clear()
+    with initialize_config_dir(version_base=None, config_dir=config_dir):
         config = compose(config_name=config_name, overrides=overrides)
     return config
 
@@ -29,7 +31,7 @@ def hyrda_init(key: str, config: DictConfig, *args, **kwargs) -> Any:
 
 
 # --- visualization ---
-def view_coords_3d(coords: np.ndarray,
+def view_mol_3d(coords: np.ndarray,
                       pdb_path: str,
                       *,
                       sample_idx: Optional[int] = None,
@@ -73,16 +75,16 @@ def view_coords_3d(coords: np.ndarray,
     # check for batch dimension
     # NOTE: while the function accepts batch of coordinates,
     #       we are only capable of plotting one sample at a time
-    if coords.ndim == 2:
+    if coords.ndim == 1:
         coords = coords[np.newaxis, :]
 
     # check for sample index
     # NOTE: if sample_idx is not None, we will plot the sample at the given index
     #       otherwise, we will plot the first sample
     if sample_idx is not None:
-        coords = coords[sample_idx]
-    else:
-        coords = coords[0]
+        coords = coords[sample_idx:sample_idx+1, :]  # keep 2D
+    B, threeN = coords.shape
+
 
     # --- parse topology atoms (order defines atom indexing) ---
     atoms = []
@@ -95,9 +97,6 @@ def view_coords_3d(coords: np.ndarray,
                 elem = 'H' if elem.startswith('H') else elem  # normalize
                 atoms.append({'line': ln, 'serial': serial, 'elem': elem})
     n = len(atoms)
-    if coords.ndim != 2 or coords.shape[1] != n * 3:
-        raise ValueError(f"coords must be (B, {n}*3); got {coords.shape}")
-    B = coords.shape[0]
 
     # --- element radii for bond inference (Å; slightly generous) ---
     r = {
@@ -168,8 +167,11 @@ def view_coords_3d(coords: np.ndarray,
     pdb_frames = ''.join(one_model_block(coords[b].ravel(), b+1) for b in range(B))
 
     # --- viewer ---
-    v = py3Dmol.view(width=width, height=height)
-    v.addModelsAsFrames(pdb_frames)              # bonds now come from CONECT
+    v = py3Dmol.view(width=width, height=height) # bonds now come from CONECT
+    if show_h:
+        v.addModelsAsFrames(pdb_frames, 'pdb', {'keepH': True})
+    else:
+        v.addModelsAsFrames(pdb_frames)
     v.setBackgroundColor(background)
     v.setViewStyle({'style': 'outline', 'width': 0.03})
 

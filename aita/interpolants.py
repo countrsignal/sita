@@ -121,12 +121,16 @@ class TrigPlan(Plan):
         z = torch.randn_like(x)
         
         # remove center of mass
-        # z = scatter_center_mol(z, g)
+        z = scatter_center_mol(z, g)
 
         # compute coupling
         if self.coupling_plan == "ot":
             # NOTE: only use OT when all molecules in the dataset have the same number of atoms
             x, z = self.compute_coupling(x, z, g)
+        
+        # convert to angstroms
+        # NOTE: data is in nanometers by default, so we convert to angstroms
+        x = nm_to_angstrom(x)
         
         # sample x(t)
         alpha_t = self.alpha_t(t)
@@ -141,7 +145,7 @@ class TrigPlan(Plan):
         # package in DGLGraph
         g.ndata["t"]  = t
         g.ndata["z"]  = z
-        g.ndata["x"]  = nm_to_angstrom(x) # NOTE: data is in nanometers by default, so we convert to angstroms
+        g.ndata["x"]  = x
         g.ndata["xt"] = xt
         g.ndata["vt"] = vt
         g.ndata["sigma_t"] = sigma_t
