@@ -169,7 +169,7 @@ def view_mol_3d(coords: np.ndarray,
     # --- viewer ---
     v = py3Dmol.view(width=width, height=height) # bonds now come from CONECT
     if show_h:
-        v.addModelsAsFrames(pdb_frames, 'pdb', {'keepH': True})
+        v.addModelsAsFrames(pdb_frames, 'pdb', {'keepH': True, 'reassignBonds': False})
     else:
         v.addModelsAsFrames(pdb_frames)
     v.setBackgroundColor(background)
