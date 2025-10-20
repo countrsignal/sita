@@ -9,7 +9,7 @@ defaults:
   - override /optimizer: adam
   - override /scheduler: reduce_on_plateau
   - override /flow: vector_field
-  - override /pipeline: flow_pipeline
+  # - override /pipeline: flow_pipeline
 
 seed: 12345
 

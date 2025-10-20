@@ -253,6 +253,7 @@ class Interpolant:
         g.set_batch_num_nodes(torch.full((batch_size,), n_atoms, dtype=torch.int64))
         g.set_batch_num_edges(torch.full((batch_size,), per_graph, dtype=torch.int64))
         g.ndata["h"] = categorical_features.repeat(batch_size, 1)
+        g.ndata["atom_index"] = torch.arange(n_atoms).repeat(batch_size)
 
         # Prepare state and time variables
         x_init = torch.randn((batch_size * n_atoms, 3))
