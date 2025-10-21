@@ -3,8 +3,8 @@ import torch
 from torchdiffeq import odeint_adjoint
 from scipy.optimize import linear_sum_assignment
 
-from typing import Union, Tuple
 from functools import partial
+from typing import Union, Tuple
 from abc import ABC, abstractmethod
 
 from .utils.logging import RankedLogger
@@ -14,6 +14,7 @@ from .utils.graph_utils import (
     scatter_center_mol,
     flatten_along_spatial,
     flatten_along_batch,
+    inference_graph_setup,
 )
 
 
@@ -111,7 +112,7 @@ class TrigPlan(Plan):
     ############################################################################################################################
     # methods for training time utils 
     ############################################################################################################################
-    
+
     @torch.no_grad()
     def __call__(self, g: dgl.DGLGraph) -> dgl.DGLGraph:
         # sample times and noise
@@ -162,7 +163,7 @@ class TrigPlan(Plan):
         t = expand_t_like(t, x)
         alpha_ratio = self.d_alpha_alpha_ratio_t(t)
         return alpha_ratio * x
-    
+
     def compute_volatility(self, t: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
         t = expand_t_like(t, x)
         sigma_t = self.sigma_t(t)
@@ -198,7 +199,6 @@ class Interpolant:
         self,
         plan: Plan,
         integrator: str = "ode-dopri5",
-        n_timesteps: int = 100,
         rtol: float = 1e-5,
         atol: float = 1e-5,
     ):
@@ -207,11 +207,14 @@ class Interpolant:
         self.plan = plan
         self.rtol = rtol
         self.atol = atol
-        self.n_timesteps = n_timesteps
+
         int_type, method = integrator.split("-")
         self.int_type = int_type
         self.method = method
 
+    #############################################################################################################################
+    # ODE mechanics
+    #############################################################################################################################
     def ode_forward(self, t: Union[float, torch.Tensor], x: torch.Tensor, g: dgl.DGLGraph, model: torch.nn.Module) -> torch.Tensor:
         # NOTE: this function is intended to called inside the torchdiffeq.odeint function
         # NOTE: instide the torchdiffeq.odeint function, x is a 2D tensor with shape (batch_size, num_nodes * 3)
@@ -223,7 +226,13 @@ class Interpolant:
         return velocity.view(g.batch_size, n_paticles * 3)
     
     @torch.no_grad()
-    def ode_integrate(self, batch_size: int, categorical_features: torch.Tensor, model: torch.nn.Module) -> torch.Tensor:
+    def ode_integrate(
+        self,
+        batch_size: int,
+        n_timesteps: int,
+        categorical_features: torch.Tensor,
+        model: torch.nn.Module,
+    ) -> torch.Tensor:
         """
         Integrate the ODE to generate conformers for a given molecule defined by the categorical features.
         Args:
@@ -240,26 +249,13 @@ class Interpolant:
         # create a graph with the given categorical features
         # we should have a batch size of batch_size * num_nodes
         n_atoms = categorical_features.size(0)
-        src, dst = fully_connected_edges(n_atoms)             # edges for one molecule
-        per_graph = src.numel()
-
-        offset = torch.arange(batch_size) * n_atoms
-        src = src.repeat(batch_size) + offset.repeat_interleave(per_graph)
-        dst = dst.repeat(batch_size) + offset.repeat_interleave(per_graph)
-        g = dgl.graph((src, dst), num_nodes=batch_size * n_atoms)
-
-        # NOTE: dgl.graph always creates a single-graph object,
-        # so batch_size defaults to 1 unless you tell DGL how many graphs you batched together
-        g.set_batch_num_nodes(torch.full((batch_size,), n_atoms, dtype=torch.int64))
-        g.set_batch_num_edges(torch.full((batch_size,), per_graph, dtype=torch.int64))
-        g.ndata["h"] = categorical_features.repeat(batch_size, 1)
-        g.ndata["atom_index"] = torch.arange(n_atoms).repeat(batch_size)
+        g = inference_graph_setup(n_atoms, batch_size, categorical_features)
 
         # Prepare state and time variables
         x_init = torch.randn((batch_size * n_atoms, 3))
         x_init = scatter_center_mol(x_init, g)
         x_init = x_init.view(batch_size, n_atoms * 3)
-        time_span = torch.linspace(0.0, 1.0, self.n_timesteps + 1)
+        time_span = torch.linspace(0.0, 1.0, n_timesteps + 1)
 
         # move data to device
         g = g.to(device)
@@ -273,4 +269,72 @@ class Interpolant:
         xs = odeint_adjoint(forward_fn, x_init, time_span, method=self.method, rtol=self.rtol, atol=self.atol, adjoint_params=())
         return xs[-1].view(batch_size, n_atoms, 3)
 
+    #############################################################################################################################
+    # SDE mechanics
+    #############################################################################################################################
+    def sde_forward(self, t: Union[float, torch.Tensor], x: torch.Tensor, g: dgl.DGLGraph, model: torch.nn.Module) -> Tuple[torch.Tensor, torch.Tensor]:
+        velocity = self.ode_forward(t, x, g, model)
+        score = self.plan.get_score_from_velocity(t, x, velocity)
+        return velocity, score
+    
+    def _eurler_maruyama_step(self, dt: float, t: Union[float, torch.Tensor], x: torch.Tensor, g: dgl.DGLGraph, model: torch.nn.Module) -> torch.Tensor:
+        volatility = self.plan.sigma_t(t).view(-1, 1)
+        velocity, score = self.sde_forward(t, x, g, model)
+
+        w_cur = torch.randn_like(x)
+        w_cur = scatter_center_mol(w_cur, g) # center noise at origin
+        dw = w_cur * (dt ** 0.5)
+
+        drift  = velocity + 0.5 * volatility * score
+        mean_x = x + drift * dt
+        return mean_x + torch.sqrt(2.0 * volatility) * dw
+    
+    @torch.no_grad()
+    def sde_integrate(
+        self,
+        batch_size: int,
+        n_timesteps: int,
+        categorical_features: torch.Tensor,
+        model: torch.nn.Module,
+    ) -> torch.Tensor:
+        """
+        Integrate the SDE to generate conformers for a given molecule defined by the categorical features.
+        Args:
+            batch_size: number of conformers of s single molecule to generate
+            categorical_features: categorical features of the molecule with shape (num_atoms, num_features)
+            model: model to use for velocity prediction
+        Returns:
+            torch.Tensor: integrated conformers
+        """
+        assert self.int_type == "sde", f"The integrator type must be 'sde' for this method. Got {self.int_type}."
         
+        if self.method != "em" or self.method != "euler":
+            raise NotImplementedError(f"The method {self.method} is not implemented for SDE integration.")
+        
+        # model device
+        device = next(model.parameters()).device
+        
+        # create a graph with the given categorical features
+        n_atoms = categorical_features.size(0)
+        g = inference_graph_setup(n_atoms, batch_size, categorical_features)
+        
+        # Prepare state and time variables
+        x_init = torch.randn((batch_size * n_atoms, 3))
+        x_init = scatter_center_mol(x_init, g)
+        x_init = x_init.view(batch_size, n_atoms * 3)
+        time_span = torch.linspace(0.0, 1.0, n_timesteps + 1)[:-1] # NOTE: we exclude the final time step to avoid numerical instability
+        dt = (time_span[1] - time_span[0]).item() # NOTE: we convert to a scalar for convenience
+        
+        # move data to device
+        g = g.to(device)
+        x_init = x_init.to(device)
+        time_span = time_span.to(device)
+        
+        # integrate the SDE
+        x_t = x_init
+        for t in time_span:
+            x_t = self._eurler_maruyama_step(dt, t, x_t, g, model)
+        # NOTE: the last step of the SDE is undefined due a singularity at t=1.0 in the interpolants
+        #       so we perform an ode step at t=1.0 to get the final conformer
+        x_t = self.ode_forward(1.0, x_t, g, model)
+        return x_t

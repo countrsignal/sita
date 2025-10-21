@@ -125,3 +125,31 @@ def scatter_center_mol(xyz: torch.Tensor, g: dgl.DGLGraph) -> torch.Tensor:
     xyz_centered = xyz - mean_per_atom
     
     return xyz_centered
+
+
+def inference_graph_setup(n_atoms: int, batch_size: int, categorical_features: torch.Tensor) -> dgl.DGLGraph:
+    """
+    Builds a DGL graph for inference time generation of multiple conformers of a single molecule.
+
+    Args:
+        n_atoms: number of atoms in the molecule
+        batch_size: number of molecules in the batch
+        categorical_features: categorical features of the molecule with shape (num_atoms, num_features)
+    Returns:
+        DGL graph of the molecule with shape (batch_size * num_atoms, num_features)
+    """
+    src, dst = fully_connected_edges(n_atoms)             # edges for one molecule
+    per_graph = src.numel()
+
+    offset = torch.arange(batch_size) * n_atoms
+    src = src.repeat(batch_size) + offset.repeat_interleave(per_graph)
+    dst = dst.repeat(batch_size) + offset.repeat_interleave(per_graph)
+    g = dgl.graph((src, dst), num_nodes=batch_size * n_atoms)
+
+    # NOTE: dgl.graph always creates a single-graph object,
+    # so batch_size defaults to 1 unless you tell DGL how many graphs you batched together
+    g.set_batch_num_nodes(torch.full((batch_size,), n_atoms, dtype=torch.int64))
+    g.set_batch_num_edges(torch.full((batch_size,), per_graph, dtype=torch.int64))
+    g.ndata["h"] = categorical_features.repeat(batch_size, 1)
+    g.ndata["atom_index"] = torch.arange(n_atoms).repeat(batch_size)
+    return g
