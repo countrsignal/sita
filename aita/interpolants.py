@@ -181,6 +181,10 @@ class TrigPlan(Plan):
         NOTE: this function blows up when t=1.0 !!!
 
         """
+        # NOTE: at inference time t could be a tensor with no dimension
+        if t.dim() == 0:
+            t = t.view(1)
+
         t = expand_t_like(t, x)
         alpha_t = self.alpha_t(t)
         sigma_t = self.sigma_t(t)
@@ -270,19 +274,22 @@ class Interpolant:
         velocity = self.ode_forward(t, x, g, model)
         score = self.plan.get_score_from_velocity(t, x, velocity)
         return velocity, score
-    
+
     def _eurler_maruyama_step(self, dt: float, t: Union[float, torch.Tensor], x: torch.Tensor, g: dgl.DGLGraph, model: torch.nn.Module) -> torch.Tensor:
-        volatility = self.plan.sigma_t(t).view(-1, 1)
+        diffusion_ceoff = self.plan.sigma_t(t).view(-1, 1)
         velocity, score = self.sde_forward(t, x, g, model)
 
-        w_cur = torch.randn_like(x)
+        # Brownian motion
+        w_cur = torch.randn_like(x).view(g.num_nodes(), 3)
         w_cur = scatter_center_mol(w_cur, g) # center noise at origin
         dw = w_cur * (dt ** 0.5)
+        dw = dw.view(x.shape)
 
-        drift  = velocity + 0.5 * volatility * score
+        # Euler-Maruyama update
+        drift  = velocity + diffusion_ceoff * score
         mean_x = x + drift * dt
-        return mean_x + torch.sqrt(2.0 * volatility) * dw
-    
+        return mean_x + torch.sqrt(2 * diffusion_ceoff) * dw
+
     @torch.no_grad()
     def sde_integrate(
         self,
@@ -302,7 +309,7 @@ class Interpolant:
             torch.Tensor: integrated conformers
         """
         
-        if method != "em" or self.method != "euler":
+        if method not in ["em", "euler"]:
             raise NotImplementedError(f"The method {method} is not implemented for SDE integration.")
         
         # model device
@@ -317,7 +324,7 @@ class Interpolant:
         x_init = scatter_center_mol(x_init, g)
         x_init = x_init.view(batch_size, n_atoms * 3)
         time_span = torch.linspace(0.0, 1.0, n_timesteps + 1)[:-1] # NOTE: we exclude the final time step to avoid numerical instability
-        dt = (time_span[1] - time_span[0]).item() # NOTE: we convert to a scalar for convenience
+        dt = (time_span[1] - time_span[0]).abs().item() # NOTE: we convert to a scalar for convenience
         
         # move data to device
         g = g.to(device)
@@ -330,5 +337,5 @@ class Interpolant:
             x_t = self._eurler_maruyama_step(dt, t, x_t, g, model)
         # NOTE: the last step of the SDE is undefined due a singularity at t=1.0 in the interpolants
         #       so we perform an ode step at t=1.0 to get the final conformer
-        x_t = self.ode_forward(1.0, x_t, g, model)
+        x_t = x_t + self.ode_forward(1.0, x_t, g, model) * dt
         return x_t
