@@ -1,0 +1,10 @@
+_target_: aita.energies.alp_energy.ALPEnergy
+_partial_: true
+defaults:
+  - data_path: ${paths.data_dir}
+  - pdb_filename: alanine_dipeptide.pdb
+  - atom_encoding_filename: atom_types_encoding.npy
+  - dimensionality: 66
+  - n_particles: 22
+  - spatial_dim: 3
+  - device: cpu

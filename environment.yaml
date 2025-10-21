@@ -39,6 +39,7 @@ dependencies:
       - wandb
       - mdtraj
       - py3Dmol
+      - seaborn
       - torchdiffeq
       - hydra-colorlog
       - hydra-optuna-sweeper
