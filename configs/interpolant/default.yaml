@@ -1,5 +1,4 @@
 _target_: aita.interpolants.Interpolant
-integrator: "ode-dopri5"
 rtol: 1e-5
 atol: 1e-5
 defaults:

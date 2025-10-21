@@ -198,19 +198,12 @@ class Interpolant:
     def __init__(
         self,
         plan: Plan,
-        integrator: str = "ode-dopri5",
         rtol: float = 1e-5,
         atol: float = 1e-5,
     ):
-        VALID_INTEGRATORS = ["ode-dopri5", "ode-euler", "sde-em"]
-        assert integrator in VALID_INTEGRATORS, f"Invalid integrator: {integrator}.Valid integrators: {', '.join(VALID_INTEGRATORS)}"
         self.plan = plan
         self.rtol = rtol
         self.atol = atol
-
-        int_type, method = integrator.split("-")
-        self.int_type = int_type
-        self.method = method
 
     #############################################################################################################################
     # ODE mechanics
@@ -232,6 +225,7 @@ class Interpolant:
         n_timesteps: int,
         categorical_features: torch.Tensor,
         model: torch.nn.Module,
+        method: str = "dopri5",
     ) -> torch.Tensor:
         """
         Integrate the ODE to generate conformers for a given molecule defined by the categorical features.
@@ -242,7 +236,7 @@ class Interpolant:
         Returns:
             torch.Tensor: integrated conformers
         """
-        assert self.int_type == "ode", f"The integrator type must be 'ode' for this method. Got {self.int_type}."
+
         # model device
         device = next(model.parameters()).device
 
@@ -266,7 +260,7 @@ class Interpolant:
         forward_fn = partial(self.ode_forward, g=g, model=model)
 
         # integrate the ODE
-        xs = odeint_adjoint(forward_fn, x_init, time_span, method=self.method, rtol=self.rtol, atol=self.atol, adjoint_params=())
+        xs = odeint_adjoint(forward_fn, x_init, time_span, method=method, rtol=self.rtol, atol=self.atol, adjoint_params=())
         return xs[-1].view(batch_size, n_atoms, 3)
 
     #############################################################################################################################
@@ -296,6 +290,7 @@ class Interpolant:
         n_timesteps: int,
         categorical_features: torch.Tensor,
         model: torch.nn.Module,
+        method: str = "em",
     ) -> torch.Tensor:
         """
         Integrate the SDE to generate conformers for a given molecule defined by the categorical features.
@@ -306,10 +301,9 @@ class Interpolant:
         Returns:
             torch.Tensor: integrated conformers
         """
-        assert self.int_type == "sde", f"The integrator type must be 'sde' for this method. Got {self.int_type}."
         
-        if self.method != "em" or self.method != "euler":
-            raise NotImplementedError(f"The method {self.method} is not implemented for SDE integration.")
+        if method != "em" or self.method != "euler":
+            raise NotImplementedError(f"The method {method} is not implemented for SDE integration.")
         
         # model device
         device = next(model.parameters()).device
