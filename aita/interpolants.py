@@ -288,7 +288,7 @@ class Interpolant:
         # Euler-Maruyama update
         drift  = velocity + diffusion_ceoff * score
         mean_x = x + drift * dt
-        return mean_x + torch.sqrt(2 * diffusion_ceoff) * dw
+        return mean_x + torch.sqrt(diffusion_ceoff) * dw
 
     @torch.no_grad()
     def sde_integrate(

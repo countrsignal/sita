@@ -151,7 +151,8 @@ class GaussianLayer(nn.Module):
         mean = self.means.weight.float().view(-1)
         std = self.stds.weight.float().view(-1).abs() + 1e-5
         return gaussian(x.float(), mean, std).type_as(self.means.weight)
-    
+
+
 class RBF(nn.Module):
     def __init__(self, K, edge_types):
         super().__init__()
@@ -239,6 +240,7 @@ class NodeTaskHead(nn.Module):
         cur_force = F.tanh(cur_force) * self.coord_range
         return cur_force
 
+
 class Graphormer3D(nn.Module):
     def __init__(self, num_features=21,num_layers=6,embed_dim=512,ffn_embed_dim=512, attention_heads=32, dropout=0.1, attention_dropout=0.1, activation_dropout=0.1, num_kernel=50, input_dropout=0.1,blocks=3):
         super().__init__()
@@ -273,8 +275,7 @@ class Graphormer3D(nn.Module):
         self.bias_proj = NonLinear(num_kernel, attention_heads)
         self.edge_proj = nn.Linear(num_kernel, embed_dim)
 
-    def forward(self, atoms, pos,time):
-        padding_mask = atoms.eq(0)
+    def forward(self, time, atoms, pos, padding_mask):
         real_mask = ~padding_mask
         n_graph, n_node = atoms.size()
         delta_pos = pos.unsqueeze(1) - pos.unsqueeze(2)
@@ -301,4 +302,4 @@ class Graphormer3D(nn.Module):
         eng_output = F.dropout(output, p=0.1, training=self.training)
         eng_output = (self.energy_proj(eng_output)).flatten(-2)
         eng_output = (eng_output*real_mask).sum(dim=-1).view(-1,1)
-        return eng_output,padding_mask
+        return eng_output, padding_mask
