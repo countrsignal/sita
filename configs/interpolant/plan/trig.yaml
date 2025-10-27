@@ -1,2 +1,2 @@
-_target_: aita.interpolants.TrigPlan
+_target_: aita.plans.TrigPlan
 coupling_plan: ot

@@ -7,7 +7,7 @@
 # this allows you to overwrite only specified parameters
 defaults:
   - override /dataset: generated
-  - override /energy: adp
+  # - override /energy: adp
   - override /ebm: default
   - override /flow: vector_field
   - override /optimizer: adam
@@ -15,7 +15,7 @@ defaults:
 
 seed: 12345
 
-task_name: "fit_ebm"
+task_name: "pretrain_ebm"
 
 tags: ["Fit", "EBM", "ADP", "Temperature"]
 
@@ -27,11 +27,30 @@ logger:
 dataset:
   debug_molecule: "alanine_dipeptide"
 
-ebm:
-  net: ${ebm.nets.graphormer}
+interpolant:
+  _partial_: true
+  plan: null
 
 flow:
   n_features: 24
 
 optimizer:
   lr: 5e-4
+
+#########################
+# custom fields 
+#########################
+
+plans:
+  flow_plan:
+    _target_: aita.plans.TrigPlan
+    coupling_plan: "ot"
+  ebm_plan:
+    _target_: aita.plans.TrigPlanLite
+
+flow_model_ckpt: ${paths.root_dir}/experimental_results/pretrain_flow/runs/2025-10-19_14-19-22/ema_model.pth
+
+sample_from_flow:
+  n_batches: 20
+  samples_per_batch: 5000
+  n_timesteps: 100

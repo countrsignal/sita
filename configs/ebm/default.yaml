@@ -1,2 +1,3 @@
 _target_: aita.models.ebms.EBM
-net: null
+defaults:
+  - net: graphormer_adp

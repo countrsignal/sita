@@ -1,5 +1,5 @@
 import os
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 
 os.environ["HYDRA_FULL_ERROR"] = "1"
@@ -18,6 +18,7 @@ from lightning import Callback, Trainer
 rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
 
 
+from aita.training.pretrain_ebm import PreTrainerEBM
 from aita.training.pretrain_flow import PreTrainerFlow
 from aita.training.common import fetch_wandb_logger
 from aita.utils.logging import RankedLogger
@@ -51,9 +52,12 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     # set seed for random number generators in pytorch, numpy and python.random
     if cfg.get("seed"):
         L.seed_everything(cfg.seed, workers=True)
+    
+    task_name = cfg.get("task_name")
+    is_flow = task_name.endswith("flow")
 
     log.log(20, f"Instantiating LitBootstrap module...")
-    model: PreTrainerFlow = PreTrainerFlow(cfg)
+    model: Union[PreTrainerFlow, PreTrainerEBM] = PreTrainerFlow(cfg) if is_flow else PreTrainerEBM(cfg)
 
     log.log(20, "Instantiating callbacks...")
     callbacks: List[Callback] = instantiate_callbacks(cfg.get("callbacks"))
@@ -71,7 +75,7 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
 
     object_dict = {
         "cfg": cfg,
-        "model": {"flow": model.flow},
+        "model": {"flow": model.flow} if is_flow else {"ebm": model.ebm},
         "callbacks": callbacks,
         "logger": logger,
         "trainer": trainer,

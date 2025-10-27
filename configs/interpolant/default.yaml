@@ -1,4 +1,5 @@
 _target_: aita.interpolants.Interpolant
+_partial_: false
 rtol: 1e-5
 atol: 1e-5
 defaults:

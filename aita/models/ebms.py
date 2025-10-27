@@ -27,9 +27,13 @@ class EBM(nn.Module):
 
         Args:
             time: Diffusion timestep tensor `(batch_size,)`.
-            features: Categorical features tensor `(batch_size, num_nodes, num_features)`.
+                    dtype: float32
+            features: Categorical features tensor `(batch_size, num_nodes)`.
+                    dtype: int64
             coordinates: Atomic coordinates tensor `(batch_size, num_nodes, 3)`.
+                    dtype: float32
             padding_mask: Padding mask tensor `(batch_size, num_nodes)`.
+                    dtype: bool
             return_logprob: If `True`, return energies only.
             require_grad: Force gradient tracking even in eval mode.
 

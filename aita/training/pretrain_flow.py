@@ -4,15 +4,11 @@ from omegaconf import DictConfig
 import dgl
 import torch
 from torch import Tensor
-from torch.optim import Adam
-from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 from lightning import LightningModule
-from lightning.pytorch.loggers import WandbLogger
 
-from typing import Optional, List
+from typing import Optional
 
-from .common import fetch_wandb_logger
 from ..utils.logging import RankedLogger
 
 
@@ -31,7 +27,7 @@ class PreTrainerFlow(LightningModule):
         # Passing in config expands it one level, so can accessed
         # by self.hparams.train instead of self.hparams.config.train
         self.save_hyperparameters(config, logger=False)
-        # Ensure that setpu() is only called once
+        # Ensure that setup() is only called once
         self._is_setup = False
         # Setup at init
         log.log(20, "Setting up pre-training modules for flow model...")

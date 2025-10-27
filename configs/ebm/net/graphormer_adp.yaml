@@ -1,4 +1,5 @@
 _target_: aita.models.graphormer.Graphormer3D
+padding_idx: null
 num_features: 21
 num_layers: 6
 embed_dim: 256

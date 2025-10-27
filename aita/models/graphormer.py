@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Callable, Tuple
+from typing import Callable, Tuple, Optional
 from torch import Tensor
 
 @torch.jit.script
@@ -242,12 +242,12 @@ class NodeTaskHead(nn.Module):
 
 
 class Graphormer3D(nn.Module):
-    def __init__(self, num_features=21,num_layers=6,embed_dim=512,ffn_embed_dim=512, attention_heads=32, dropout=0.1, attention_dropout=0.1, activation_dropout=0.1, num_kernel=50, input_dropout=0.1,blocks=3):
+    def __init__(self, padding_idx: Optional[int] = None, num_features: int = 21, num_layers: int = 6, embed_dim: int = 512, ffn_embed_dim: int = 512, attention_heads: int = 32, dropout: float = 0.1, attention_dropout: float = 0.1, activation_dropout: float = 0.1, num_kernel: int = 50, input_dropout: float = 0.1, blocks: int = 3):
         super().__init__()
-        self.atom_types = num_features+1 #0 is padding index
+        self.atom_types = num_features + 1
         self.blocks = blocks
         self.edge_types = self.atom_types * self.atom_types
-        self.atom_encoder = nn.Embedding(self.atom_types, embed_dim, padding_idx=0)
+        self.atom_encoder = nn.Embedding(self.atom_types, embed_dim, padding_idx=padding_idx)
         self.time_encoder = NonLinear(1, embed_dim)
         self.input_dropout = input_dropout
         self.layers = nn.ModuleList([
