@@ -47,42 +47,6 @@ class PreTrainerEBM(LightningModule):
         self.dataset = hydra.utils.instantiate(self.hparams.dataset)
         log.log(20, "Dataset Class Initialized.")
 
-        #################################################################################
-        # Generate training data from the flow model
-        #################################################################################
-        # Building dataset object
-        log.log(20, "Loading pre-trained flow model...")
-        flow_model = hydra.utils.instantiate(self.hparams.flow)
-        flow_model.load_state_dict(torch.load(self.hparams.flow_model_ckpt, weights_only=True, map_location="cpu"))
-        flow_model.eval()
-
-        # NOTE: for EBM pre-training we use partial initalization
-        flow_plan = hydra.utils.instantiate(self.hparams.plans.flow_plan)
-        interpolant = hydra.utils.instantiate(self.hparams.interpolant)(plan=flow_plan)
-
-        log.log(20, "Generating synthetic data from the flow model...")
-        for molecule, one_hots_tuple in self.dataset.molecule_features.items():
-            for _ in trange(self.hparams.sample_from_flow.n_batches, desc=f"Sampling conformers for {molecule}"):
-                # sample from the flow model
-                samples = interpolant.ode_integrate(
-                    batch_size=self.hparams.sample_from_flow.samples_per_batch,
-                    n_timesteps=self.hparams.sample_from_flow.n_timesteps,
-                    categorical_features=torch.cat(one_hots_tuple, dim=1),
-                    model=flow_model,
-                )
-                # update the dataset with the new samples
-                self.dataset.update_dataset(
-                    mol_id=molecule,
-                    samples=samples.chunk(self.hparams.sample_from_flow.samples_per_batch, dim=0),
-                )
-        log.log(20, "Data generation completed.")
-        # clear memory
-        del(samples, one_hots_tuple, molecule, interpolant, flow_model, flow_plan)
-        gc.collect()
-        #################################################################################
-        #
-        #################################################################################
-
         # setup interpolant object
         ebm_plan = hydra.utils.instantiate(self.hparams.plans.ebm_plan)
         self.interpolant = hydra.utils.instantiate(self.hparams.interpolant)(plan=ebm_plan)
@@ -126,11 +90,46 @@ class PreTrainerEBM(LightningModule):
     
     def on_fit_start(self) -> None:
         super().on_fit_start()
+
+        # setup EMA
         if self.ema is not None:
             if not self.ema.allow_different_devices:
                 self.ema.to(self.device)
-            self.ema.copy_to(self.ebm)
-    
+
+        #################################################################################
+        # Generate training data from the flow model
+        #################################################################################
+        # Building dataset object
+        log.log(20, "Loading pre-trained flow model...")
+        flow_model = hydra.utils.instantiate(self.hparams.flow)
+        flow_model.load_state_dict(torch.load(self.hparams.flow_model_ckpt, weights_only=True, map_location="cpu"))
+        flow_model = flow_model.to(self.device)
+        flow_model.eval()
+
+        # NOTE: for EBM pre-training we use partial initalization
+        flow_plan = hydra.utils.instantiate(self.hparams.plans.flow_plan)
+        interpolant = hydra.utils.instantiate(self.hparams.interpolant)(plan=flow_plan)
+
+        log.log(20, "Generating synthetic data from the flow model...")
+        for molecule, one_hots_tuple in self.dataset.molecule_features.items():
+            for _ in trange(self.hparams.sample_from_flow.n_batches, desc=f"Sampling conformers for {molecule}"):
+                # sample from the flow model
+                samples = interpolant.ode_integrate(
+                    batch_size=self.hparams.sample_from_flow.samples_per_batch,
+                    n_timesteps=self.hparams.sample_from_flow.n_timesteps,
+                    categorical_features=torch.cat(one_hots_tuple, dim=1),
+                    model=flow_model,
+                ).cpu()
+                # update the dataset with the new samples
+                self.dataset.update_dataset(
+                    mol_id=molecule,
+                    samples=samples.chunk(self.hparams.sample_from_flow.samples_per_batch, dim=0),
+                )
+        log.log(20, "Data generation completed.")
+        # clear memory
+        del(samples, one_hots_tuple, molecule, interpolant, flow_model, flow_plan)
+        gc.collect()
+
     def on_before_batch_transfer(self, batch: Dict[str, Tensor], dataloader_idx: int) -> Dict[str, Tensor]:
         # NOTE: we perform all the necessary data transformations here on CPU
         # > sample interpolants plan
