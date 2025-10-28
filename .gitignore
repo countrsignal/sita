@@ -25,6 +25,7 @@ notebooks/
 scripts/logs/
 experimental_results
 sim_scripts
+nightly
 wandb
 data
 

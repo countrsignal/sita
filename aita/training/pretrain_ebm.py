@@ -87,7 +87,7 @@ class PreTrainerEBM(LightningModule):
                 "frequency": 1,
             },
         }
-    
+
     def on_fit_start(self) -> None:
         super().on_fit_start()
 
@@ -160,7 +160,7 @@ class PreTrainerEBM(LightningModule):
             return_logprob=False,
             require_grad=True,
         )
-        
+
         # score matching loss
         squared_errors = torch.square(sigma_t * grads + z).mean(dim=-1) # (B, L)
         # account for padding while computing mean
