@@ -92,7 +92,12 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     
         # NOTE: we save both the model and the ema model
         log.log(20, "Saving model checkpoints...")
-        torch.save(model.flow.state_dict(), os.path.join(cfg.paths.output_dir, "model.pth"))
+        # > save the model weights
+        if is_flow:
+            torch.save(model.flow.state_dict(), os.path.join(cfg.paths.output_dir, "model.pth"))
+        else:
+            torch.save(model.ebm.state_dict(), os.path.join(cfg.paths.output_dir, "model.pth"))
+        # > save the ema model weights
         if model.ema is not None:
             torch.save(model.ema.ema_model.state_dict(), os.path.join(cfg.paths.output_dir, "ema_model.pth"))
 
