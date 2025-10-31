@@ -34,6 +34,7 @@ AMINO_TO_INDEX = {
     "NME": 21,
 }
 
+
 ###################################
 # functions
 ###################################
@@ -120,12 +121,23 @@ def categorical_featurizer(
         return residue_type_one_hot, atom_one_hot
 
 
-def feats_from_pdb(pdb_path: str) -> torch.Tensor:
+def feats_from_pdb(pdb_path: str, atom_types_encoding: Mapping[str, int], return_concat: bool = True) -> torch.Tensor:
     """
     Get the features for a PDB file.
 
     Args:
         pdb_path: path to the PDB file
+        atom_types_encoding: mapping from atom types to indices
+        return_concat: whether to return the concatenated features or not
     """
     topology = md.load_topology(pdb_path)
-    return categorical_featurizer(topology)
+    return categorical_featurizer(atom_types_encoding, topology, return_concat=return_concat)
+
+
+###################################
+# constants
+###################################
+
+DEBUG_FEATURIZERS = {
+    "alanine_dipeptide": get_adp_features,
+}

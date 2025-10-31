@@ -14,6 +14,7 @@ from lightning import LightningModule
 from typing import Optional, Dict
 
 from ..utils.logging import RankedLogger
+from ..pipeline.pipeline import Pipeline
 
 
 log = RankedLogger(__name__, on_rank_zero=True)
@@ -53,8 +54,8 @@ class PreTrainerEBM(LightningModule):
         log.log(20, "Interpolant Initialized.")
 
         # setup pipeline
-        if "pipeline" in self.hparams:
-            self.pipeline = hydra.utils.instantiate(self.hparams.pipeline)
+        if "pipeline" in self.hparams and self.hparams.pipeline is not None:
+            self.pipeline = Pipeline(self.hparams.pipeline)
             log.log(20, "Pipeline Initialized.")
         else:
             self.pipeline = None
@@ -136,7 +137,7 @@ class PreTrainerEBM(LightningModule):
         batch = self.interpolant.plan(batch)
         # apply data pipeline
         if self.pipeline is not None:
-            batch = self.pipeline(batch)
+            batch = self.pipeline.run_ebm(batch, is_training=True)
         return batch
     
     def training_step(self, batch: Dict[str, Tensor], batch_idx: int) -> Tensor:

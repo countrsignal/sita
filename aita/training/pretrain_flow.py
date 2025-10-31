@@ -10,6 +10,7 @@ from lightning import LightningModule
 from typing import Optional
 
 from ..utils.logging import RankedLogger
+from ..pipeline.pipeline import Pipeline
 
 
 log = RankedLogger(__name__, on_rank_zero=True)
@@ -48,8 +49,8 @@ class PreTrainerFlow(LightningModule):
         log.log(20, "Interpolant Initialized.")
 
         # Setup pipeline
-        if "pipeline" in self.hparams:
-            self.pipeline = hydra.utils.instantiate(self.hparams.pipeline)
+        if "pipeline" in self.hparams and self.hparams.pipeline is not None:
+            self.pipeline = Pipeline(self.hparams.pipeline)
             log.log(20, "Pipeline Initialized.")
         else:
             self.pipeline = None
@@ -97,7 +98,7 @@ class PreTrainerFlow(LightningModule):
         batch = self.interpolant.plan(batch)
         # apply data pipeline
         if self.pipeline is not None:
-            batch = self.pipeline(batch)
+            batch = self.pipeline.run_flow(batch, is_training=True)
         return batch
 
     def training_step(self, batch: dgl.DGLGraph, batch_idx: int) -> Tensor:

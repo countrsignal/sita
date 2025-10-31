@@ -10,16 +10,12 @@ from typing import Optional, List, Dict, Tuple
 
 from ..utils.data_utils import remove_mean
 from ..utils.graph_utils import fully_connected_edges
-from ..data.features import get_adp_features, categorical_featurizer
+from ..data.features import DEBUG_FEATURIZERS, categorical_featurizer
 
 
 ###################################
 # Classes
 ###################################
-
-DEBUG_FEATURIZERS = {
-    "alanine_dipeptide": get_adp_features,
-}
 
 
 class SimulationDataset(dgl.data.DGLDataset):

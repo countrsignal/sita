@@ -1,29 +1,14 @@
 import dgl
 import torch
-from typing import List, Callable
+
+from .pipeline import Protocol
 
 
-class PipelineTrain:
-
-    def __init__(self, data_augs: List[Callable[[dgl.DGLGraph], dgl.DGLGraph]]):
-        self.data_augs = data_augs
-
-    @torch.no_grad()
-    def __call__(self, g: dgl.DGLGraph) -> dgl.DGLGraph:
-        for aug in self.data_augs:
-            g = aug(g)
-        return g
-
-    def __len__(self) -> int:
-        return len(self.data_augs)
-
-    def __getitem__(self, idx: int) -> Callable[[dgl.DGLGraph], dgl.DGLGraph]:
-        return self.data_augs[idx]
-
-
-class GeometryDistortion:
+class GeometryDistortion(Protocol):
 
     def __init__(self, t_distort: float = 0.5, p_distort: float = 0.2, sigma_distort: float = 0.5):
+        super().__init__()
+
         self.t_distort = t_distort
         self.p_distort = p_distort
         self.sigma_distort = sigma_distort
