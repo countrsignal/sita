@@ -47,7 +47,7 @@ class AtomConditioning(nn.Module):
         attr_emb = attr_emb + time_emb # (N, D)
 
         for transition in self.transitions:
-            attr_emb = transition(attr_emb) # (N, D)
+            attr_emb = transition(attr_emb) + attr_emb # (N, D)
 
         return attr_emb
 
