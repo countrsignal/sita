@@ -4,10 +4,10 @@ import dgl
 import torch
 from torch import nn
 
-from .swish import SwishBeta
-from .layernorm import AdaLN
-from .gvp import GVPConv, NodePositionUpdate
-from .embeddings import FourierEmbedding, PositionalEncoding
+from .layers.swish import SwishBeta
+from .layers.layernorm import AdaLN
+from .layers.gvp import GVPConv, NodePositionUpdate
+from .layers.embeddings import FourierEmbedding, PositionalEncoding
 
 
 class GVP_vector_field(nn.Module):
@@ -149,3 +149,14 @@ class GVP_vector_field(nn.Module):
         vector_field = self.position_updater(hs, vs)
         # vector_field: (num_nodes, 3)
         return vector_field
+    
+    def training_step(self, graph: dgl.DGLGraph) -> torch.Tensor:
+        # predict velocity
+        velocity = self(graph)
+
+        # compute loss
+        graph.ndata["loss_per_node"] = torch.square(velocity - graph.ndata["vt"]).mean(dim=-1)
+        loss_per_molecule = dgl.mean_nodes(graph, "loss_per_node")
+        loss = loss_per_molecule.mean()
+
+        return {"loss": loss}

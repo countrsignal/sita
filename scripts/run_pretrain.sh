@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=AITA_pretrain
+#SBATCH --job-name=AITA_pretrain_flow_vf_control
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:1
 #SBATCH --ntasks-per-node=6
@@ -9,7 +9,7 @@
 #SBATCH --mem=100G
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=dap181@pitt.edu
-#SBATCH --output=/net/pulsar/home/koes/dap181/labspace/aita/scripts/logs/aita-pretrain-flow-ot-bug.out
+#SBATCH --output=/net/pulsar/home/koes/dap181/labspace/aita/scripts/logs/aita-pretrain-flow-vf-control.out
 
 
 ############################

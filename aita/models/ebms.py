@@ -26,7 +26,7 @@ class EBM(nn.Module):
         """Run Graphormer-based energy prediction.
 
         Args:
-            time: Diffusion timestep tensor `(batch_size,)`.
+            time: Diffusion timestep tensor `(batch_size, 1)`.
                     dtype: float32
             features: Categorical features tensor `(batch_size, num_nodes)`.
                     dtype: int64

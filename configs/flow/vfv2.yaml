@@ -1,0 +1,14 @@
+_target_: aita.models.vector_field_v2.VFV2
+n_features: 21
+n_layers: 5
+n_hidden: 128
+n_vec: 16
+pair_dropout: 0.1
+n_transitions: 2
+n_message_gvps: 1
+n_update_gvps: 1
+n_coord_gvps: 1
+use_dst_feats: false
+vector_gating: true
+n_distogram_bins: 32
+distance_ranges: [0.0, 10.0]

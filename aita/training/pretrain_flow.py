@@ -104,22 +104,21 @@ class PreTrainerFlow(LightningModule):
     def training_step(self, batch: dgl.DGLGraph, batch_idx: int) -> Tensor:
         # transfer batch to device
         batch = batch.to(self.device)
-        # predict velocity
-        velocity = self.flow(batch)
-        # compute loss
-        batch.ndata["loss_per_node"] = torch.square(velocity - batch.ndata["vt"]).mean(dim=-1)
-        loss_per_molecule = dgl.mean_nodes(batch, "loss_per_node")
-        loss = loss_per_molecule.mean()
+
+        # training step
+        loss_dict = self.flow.training_step(batch)
+
         # log loss
-        self.log(
-            "pretrain/flow/loss",
-            loss,
-            on_step=False,
-            on_epoch=True,
-            prog_bar=True,
-            batch_size=batch.batch_size,
-            )
-        return loss
+        for key, value in loss_dict.items():
+            self.log(
+                f"pretrain/flow/{key}",
+                value,
+                on_step=False,
+                on_epoch=True,
+                prog_bar=True,
+                batch_size=batch.batch_size,
+                )
+        return loss_dict["loss"]
     
     def optimizer_step(self, *args, **kwargs):
         super().optimizer_step(*args, **kwargs)
