@@ -191,6 +191,6 @@ def inference_graph_setup(n_atoms: int, batch_size: int, categorical_features: t
     # so batch_size defaults to 1 unless you tell DGL how many graphs you batched together
     g.set_batch_num_nodes(torch.full((batch_size,), n_atoms, dtype=torch.int64))
     g.set_batch_num_edges(torch.full((batch_size,), per_graph, dtype=torch.int64))
-    g.ndata["h"] = categorical_features.repeat(batch_size, 1)
+    g.ndata["attr"] = categorical_features.repeat(batch_size, 1)
     g.ndata["atom_index"] = torch.arange(n_atoms).repeat(batch_size)
     return g

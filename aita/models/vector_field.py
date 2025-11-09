@@ -109,7 +109,7 @@ class GVP_vector_field(nn.Module):
         ph = self.positional_embedding(graph.ndata["atom_index"].view(-1)) # NOTE: we expect the atom index to be a 1D tensor
         # ph: (num_nodes, n_hidden)
 
-        z_init = torch.cat([graph.ndata["h"], ph], dim=1)
+        z_init = torch.cat([graph.ndata["attr"], ph], dim=1)
         # z_init: (num_nodes, n_features + 1)
 
         zs = self.initial_embedding(z_init)
@@ -120,7 +120,7 @@ class GVP_vector_field(nn.Module):
         # zs: (num_nodes, n_hidden)
 
         if condition is not None and self.self_conditioning:
-            z_cond = graph.ndata["h"].clone().float()
+            z_cond = graph.ndata["attr"].clone().float()
             # z_cond: (num_nodes, n_features)
 
             z_cond = self.conditional_embedding(z_cond)

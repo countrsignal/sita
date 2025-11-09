@@ -23,33 +23,28 @@ class AtomConditioning(nn.Module):
     ) -> None:
         super().__init__()
 
-        self.pos_enc   = PositionalEncoding(n_hidden)
-        self.attr_emb  = nn.Linear(n_features + n_hidden, n_hidden)
-        self.time_emb  = FourierEmbedding(n_hidden)
-        self.time_norm = nn.LayerNorm(n_hidden)
-        self.time_to_attr = LinearNoBias(n_hidden, n_hidden)
-
-        self.transitions = nn.ModuleList([
-            Transition(n_hidden, n_hidden)
-            for _ in range(n_transitions)
-        ])
+        self.temporal_embedding   = FourierEmbedding(n_hidden)
+        self.positional_embedding = PositionalEncoding(n_hidden)
+        self.initial_embedding = nn.Sequential(
+            nn.Linear(n_features + n_hidden, n_hidden),
+            nn.SiLU(),
+        )
+        self.time_to_attr =  AdaLN(n_hidden, n_hidden)
     
     def forward(self, time: Tensor, attr: Tensor, atom_index: Tensor) -> Tensor:
-         # NOTE: we expect the atom index and time to be a 1D tensors of shape (N,)
-         #       and the attribute tensor to be a 2D tensor of shape (N, n_features)
-        pos_enc = self.pos_enc(atom_index)
-        attr_emb = self.attr_emb(torch.cat([attr, pos_enc], dim=1)) # (N, D)
-
-        time_emb = self.time_emb(time) # (N, D)
-        time_emb = self.time_norm(time_emb)
-        time_emb = self.time_to_attr(time_emb) 
-
-        attr_emb = attr_emb + time_emb # (N, D)
-
-        for transition in self.transitions:
-            attr_emb = transition(attr_emb) + attr_emb # (N, D)
-
-        return attr_emb
+        # NOTE: we expect the atom index and time to be a 1D tensors of shape (N,)
+        #       and the attribute tensor to be a 2D tensor of shape (N, n_features)
+        th = self.temporal_embedding(time)
+        # th: (N, n_hidden)
+        ph = self.positional_embedding(atom_index)
+        # ph: (N, n_hidden)
+        z_init = torch.cat([attr, ph], dim=1)
+        # z_init: (N, n_features + n_hidden)
+        zs = self.initial_embedding(z_init)
+        # zs: (N, n_hidden)
+        zs = self.time_to_attr(zs, th)
+        # zs: (N, n_hidden)
+        return zs
 
 
 class AtomEncoder(nn.Module):
@@ -86,7 +81,7 @@ class AtomEncoder(nn.Module):
         # Compute the node representation
         node_repr = self.atom_conditioning(
             time=graph.ndata["t"].view(-1),
-            attr=graph.ndata["h"],
+            attr=graph.ndata["attr"],
             atom_index=graph.ndata["atom_index"].view(-1),
         )
         # node_repr: (num_nodes, n_hidden)

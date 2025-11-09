@@ -93,14 +93,14 @@ class SimulationDataset(dgl.data.DGLDataset):
 
     def __getitem__(self, index):
         # retrieve features and samples
-        h, x = self.features[self.backmap[index]], self.samples[index]
+        attr, x = self.features[self.backmap[index]], self.samples[index]
         x = x.squeeze(0) # conver coordinates shape from (1, num_nodes, 3) -> (num_nodes, 3)
         # create edges for fully connected graph without self-connections
         edges = fully_connected_edges(x.shape[0]) # this is a tuple of two tensors
         # create graph
         g = dgl.graph(edges, num_nodes=x.shape[0])
-        g.ndata["h"] = h
-        g.ndata["x"] = x
+        g.ndata["attr"] = attr
+        g.ndata["x1"] = x
         # create positional encoding
         g.ndata["atom_index"] = torch.arange(x.size(0))
         return g

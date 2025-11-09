@@ -9,7 +9,7 @@ defaults:
   - override /dataset: simulated
   - override /optimizer: adam
   - override /scheduler: reduce_on_plateau
-  - override /flow: vector_field
+  - override /flow: vfv2
 
 seed: 12345
 
@@ -31,4 +31,4 @@ flow:
   n_features: 24
 
 optimizer:
-  lr: 5e-4
+  lr: 1e-3

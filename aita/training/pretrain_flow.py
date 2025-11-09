@@ -73,16 +73,19 @@ class PreTrainerFlow(LightningModule):
 
     def configure_optimizers(self):
         optimizer = hydra.utils.instantiate(self.hparams.optimizer, params=self.flow.parameters())
-        scheduler = hydra.utils.instantiate(self.hparams.scheduler, optimizer=optimizer)
-        return {
-            "optimizer": optimizer,
-            "lr_scheduler": {
-                "scheduler": scheduler,
-                "monitor": "pretrain/flow/loss",  # make sure this matches exactly what you log
-                "interval": "epoch",              # optional: how often to step the scheduler
-                "frequency": 1,
-            },
-        }
+        if "scheduler" in self.hparams:
+            scheduler = hydra.utils.instantiate(self.hparams.scheduler, optimizer=optimizer)
+            return {
+                "optimizer": optimizer,
+                "lr_scheduler": {
+                    "scheduler": scheduler,
+                    "monitor": "pretrain/flow/loss",  # make sure this matches exactly what you log
+                    "interval": "epoch",              # optional: how often to step the scheduler
+                    "frequency": 1,
+                },
+            }
+        else:
+            return {"optimizer": optimizer}
 
     def on_fit_start(self) -> None:
         super().on_fit_start()

@@ -163,7 +163,7 @@ class TrigPlan(Plan):
     @torch.no_grad()
     def __call__(self, g: dgl.DGLGraph) -> dgl.DGLGraph:
         # sample times and noise
-        x = g.ndata.pop("x") # NOTE: this is the clean data point x1 (without noise)
+        x = g.ndata.pop("x1") # NOTE: this is the clean data point x1 (without noise)
         t = self.sample_times(g)
         t = expand_t_like(t, x)
         z = torch.randn_like(x)
@@ -193,7 +193,7 @@ class TrigPlan(Plan):
         # package in DGLGraph
         g.ndata["t"]  = t
         g.ndata["z"]  = z
-        g.ndata["x"]  = x
+        g.ndata["x1"] = x
         g.ndata["xt"] = xt
         g.ndata["vt"] = vt
         g.ndata["sigma_t"] = sigma_t
