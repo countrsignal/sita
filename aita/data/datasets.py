@@ -198,3 +198,50 @@ class GenerativeDataset(torch.utils.data.Dataset):
             pin_memory=pin_memory,
             collate_fn=self._collate_fn,
         )
+
+
+class BootstrapDataset(torch.utils.data.Dataset):
+    
+    def __init__(
+        self,
+        data_path: str,
+        param: str,
+        anneal_type: str,
+        bootstrap_model: str = "flow",
+        debug_molecule: Optional[str] = None,
+    ) -> None:
+        assert bootstrap_model in ["flow", "ebm"], "Bootstrap model must be either 'flow' or 'ebm'."
+        assert anneal_type in ["alchemical", "temperature"], "Anneal type must be either 'alchemical' or 'temperature'."
+
+        self._bootstrap_model = bootstrap_model
+        self.data_path = Path(data_path)
+        self.param = param
+        self.anneal_type = anneal_type
+        self.debug_molecule = debug_molecule
+
+        # load atom types encoding
+        self.atom_types_encoding = np.load(
+            self.data_path / "atom_types_encoding.npy",
+            allow_pickle=True,
+        ).item()
+        # load molecule features
+        self.molecule_features = {}
+        if self.debug_molecule is None:
+            pdb_dir = self.data_path / "pdbs"
+            for file in pdb_dir.glob("*.pdb"):
+                residue_type_one_hot, atom_one_hot = categorical_featurizer(self.atom_types_encoding, md.load_topology(file), return_concat=False)
+                self.molecule_features[file.stem] = (residue_type_one_hot, atom_one_hot)
+        else:
+            # NOTE: ADP is our test case molecule and we featurize it differently
+            residue_type_one_hot, atom_one_hot = DEBUG_FEATURIZERS[self.debug_molecule](return_concat=False)
+            self.molecule_features[self.debug_molecule] = (residue_type_one_hot, atom_one_hot)
+    
+    @property
+    def bootstrap_model(self):
+        return self._bootstrap_model
+    
+    @bootstrap_model.setter
+    def bootstrap_model(self, value: str) -> None:
+        assert value in ["flow", "ebm"], "Bootstrap model must be either 'flow' or 'ebm'."
+        self._bootstrap_model = value
+    

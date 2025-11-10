@@ -14,3 +14,4 @@ micromamba activate aita
 # > micromamba
 micromamba install -c dglteam/label/th24_cu124 -c conda-forge dgl
 micromamba install lightning -c conda-forge
+micromamba install -c conda-forge rdkit
