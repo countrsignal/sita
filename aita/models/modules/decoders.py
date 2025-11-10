@@ -13,6 +13,7 @@ class GVP_Decoder(nn.Module):
         n_layers: int = 5,
         n_hidden: int = 64,
         n_vec: int = 16,
+        edge_feat_size: int = 0,
         n_message_gvps: int = 1,
         n_update_gvps: int = 1,
         n_coord_gvps: int = 1,
@@ -30,6 +31,7 @@ class GVP_Decoder(nn.Module):
                     n_update_gvps=n_update_gvps,
                     use_dst_feats=use_dst_feats,
                     vector_gating=vector_gating,
+                    edge_feat_size=edge_feat_size,
                     coords_range=10,
                     scalar_activation=SwishBeta,
                 )

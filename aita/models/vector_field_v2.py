@@ -113,6 +113,7 @@ class VFV2(nn.Module):
             n_layers=n_layers,
             n_hidden=n_hidden,
             n_vec=n_vec,
+            edge_feat_size=pair_dim_hidden,
             n_message_gvps=n_message_gvps,
             n_update_gvps=n_update_gvps,
             n_coord_gvps=n_coord_gvps,
@@ -189,7 +190,7 @@ class VFV2(nn.Module):
             # disto_logits: (num_nodes, num_nodes, n_distogram_bins)
 
             # compute distogram targets
-            coords = dgl_nodes_to_padded_tensor(graph, feat_key="x")[0]
+            coords = dgl_nodes_to_padded_tensor(graph, feat_key="x1")[0]
             targets, mask = distogram_targets(coords, self.bin_edges)
             # targets: (num_nodes, num_nodes, n_distogram_bins)
             # mask: (num_nodes, num_nodes)
