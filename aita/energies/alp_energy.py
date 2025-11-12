@@ -1,29 +1,33 @@
 from contextlib import contextmanager
 from typing import Optional
 
-import matplotlib.gridspec as gridspec
-import matplotlib.pyplot as plt
-import mdtraj as md
 import numpy as np
-import openmm
-import torch
-from bgflow import OpenMMBridge, OpenMMEnergy
-from lightning.pytorch.loggers import WandbLogger
+import mdtraj as md
+import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
+import matplotlib.gridspec as gridspec
+
+import torch
+from lightning.pytorch.loggers import WandbLogger
+
+import openmm
 from openmm import app
-from aita.energies.base_molecule_energy_function import BaseMoleculeEnergy
-from aita.energies.components.tica import plot_tic01, run_tica, tica_features
-from aita.models.components.distribution_distances import (
+from bgflow import OpenMMBridge, OpenMMEnergy
+
+from .base_molecule_energy_function import BaseMoleculeEnergy
+from .components.tica import plot_tic01, run_tica, tica_features
+from ..models.components.distribution_distances import (
     compute_distribution_distances_with_prefix,
 )
-from aita.models.components.energy_utils import (
+from ..models.components.energy_utils import (
     check_symmetry_change,
     compute_chirality_sign,
     find_chirality_centers,
 )
-from aita.models.components.optimal_transport import torus_wasserstein
-from aita.utils.data_utils import remove_mean
-from aita.utils.logging import RankedLogger
+from ..models.components.optimal_transport import torus_wasserstein
+from ..utils.data_utils import remove_mean
+from ..utils.logging import RankedLogger
+
 
 logger = RankedLogger(__name__)
 

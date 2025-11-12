@@ -5,13 +5,6 @@ from torch.nn.utils.rnn import pad_sequence
 from typing import Tuple, Optional
 
 
-def fully_connected_edges(num_nodes: int) -> Tuple[torch.Tensor, torch.Tensor]:
-    nodes = torch.arange(num_nodes)
-    edges = torch.cartesian_prod(nodes, nodes)
-    edges = edges[edges[:, 0] != edges[:, 1]]
-    return edges[:, 0], edges[:, 1]
-
-
 def get_batch_indices(g: dgl.DGLGraph) -> torch.Tensor:
     return torch.arange(g.batch_size, device=g.device).repeat_interleave(g.batch_num_nodes())
 

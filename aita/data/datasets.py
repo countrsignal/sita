@@ -14,7 +14,6 @@ from typing import Optional, List, Dict, Tuple, Union
 
 from .features import ATOM_TYPES_ENCODING
 from .molecule import Molecule, DEBUG_MOLECULES
-from ..utils.data_utils import remove_mean
 
 
 ###################################
@@ -69,7 +68,7 @@ class SimulationDataset(Dataset):
             traj = md.load(dcd_file, top=pdb_file)
             # process coordinates data
             coords_tensor = torch.from_numpy(traj.xyz).float()
-            coords_tensor = remove_mean(coords_tensor, traj.n_atoms, 3)
+            coords_tensor = coords_tensor - coords_tensor.mean(dim=1, keepdim=True)
             coords_tensor = torch.chunk(coords_tensor, traj.n_frames, dim=0) # this is a list of tensors, each with shape (1, n_atoms, 3)
             # cache data
             samples.extend(coords_tensor)

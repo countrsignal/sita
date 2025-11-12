@@ -7,18 +7,27 @@ from torch import Tensor, empty
 from rdkit import Chem
 from pathlib import Path
 
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Tuple
 from dataclasses import dataclass, field
 
-from ..utils.graph_utils import fully_connected_edges
 from .features import (
-    AMINO_TO_INDEX,
     ATOM_TYPES_ENCODING, 
     parse_mol_rdkit,
     categorical_featurizer,
     build_dgl_edge_features,
     DEBUG_FEATURIZERS,
 )
+
+
+###################################
+# functions
+###################################
+
+def fully_connected_edges(num_nodes: int) -> Tuple[torch.Tensor, torch.Tensor]:
+    nodes = torch.arange(num_nodes)
+    edges = torch.cartesian_prod(nodes, nodes)
+    edges = edges[edges[:, 0] != edges[:, 1]]
+    return edges[:, 0], edges[:, 1]
 
 
 ###################################
