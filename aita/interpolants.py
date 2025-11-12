@@ -6,11 +6,9 @@ from functools import partial
 from typing import Union, Tuple
 
 from .plans import Plan, PlanLite
+from .data.molecule import Molecule
 from .utils.logging import RankedLogger
-from .utils.graph_utils import (
-    scatter_center_mol,
-    inference_graph_setup,
-)
+from .utils.graph_utils import scatter_center_mol
 
 
 log = RankedLogger(__name__, on_rank_zero=True)
@@ -44,18 +42,20 @@ class Interpolant:
     @torch.no_grad()
     def ode_integrate(
         self,
+        mol: Molecule,
         batch_size: int,
         n_timesteps: int,
-        categorical_features: torch.Tensor,
         model: torch.nn.Module,
         method: str = "dopri5",
     ) -> torch.Tensor:
         """
         Integrate the ODE to generate conformers for a given molecule defined by the categorical features.
         Args:
+            mol: Molecule object to generate conformers 
             batch_size: number of conformers of s single molecule to generate
-            categorical_features: categorical features of the molecule with shape (num_atoms, num_features)
+            n_timesteps: number of time steps to integrate the ODE
             model: model to use for velocity prediction
+            method: method to use for integration (e.g. "dopri5", "adams", "euler")
         Returns:
             torch.Tensor: integrated conformers
         """
@@ -65,13 +65,12 @@ class Interpolant:
 
         # create a graph with the given categorical features
         # we should have a batch size of batch_size * num_nodes
-        n_atoms = categorical_features.size(0)
-        g = inference_graph_setup(n_atoms, batch_size, categorical_features)
+        g = mol.inference_graph_setup(batch_size)
 
         # Prepare state and time variables
-        x_init = torch.randn((batch_size * n_atoms, 3))
+        x_init = torch.randn((batch_size * mol.n_atoms, 3))
         x_init = scatter_center_mol(x_init, g)
-        x_init = x_init.view(batch_size, n_atoms * 3)
+        x_init = x_init.view(batch_size, mol.n_atoms * 3)
         time_span = torch.linspace(0.0, 1.0, n_timesteps + 1)
 
         # move data to device
@@ -84,7 +83,7 @@ class Interpolant:
 
         # integrate the ODE
         xs = odeint_adjoint(forward_fn, x_init, time_span, method=method, rtol=self.rtol, atol=self.atol, adjoint_params=())
-        return xs[-1].view(batch_size, n_atoms, 3)
+        return xs[-1].view(batch_size, mol.n_atoms, 3)
 
     #############################################################################################################################
     # SDE mechanics
@@ -112,18 +111,20 @@ class Interpolant:
     @torch.no_grad()
     def sde_integrate(
         self,
+        mol: Molecule,
         batch_size: int,
         n_timesteps: int,
-        categorical_features: torch.Tensor,
         model: torch.nn.Module,
         method: str = "em",
     ) -> torch.Tensor:
         """
         Integrate the SDE to generate conformers for a given molecule defined by the categorical features.
         Args:
+            mol: Molecule object to generate conformers 
             batch_size: number of conformers of s single molecule to generate
-            categorical_features: categorical features of the molecule with shape (num_atoms, num_features)
+            n_timesteps: number of time steps to integrate the ODE
             model: model to use for velocity prediction
+            method: method to use for integration (e.g. "em", "euler")
         Returns:
             torch.Tensor: integrated conformers
         """
@@ -135,13 +136,12 @@ class Interpolant:
         device = next(model.parameters()).device
         
         # create a graph with the given categorical features
-        n_atoms = categorical_features.size(0)
-        g = inference_graph_setup(n_atoms, batch_size, categorical_features)
+        g = mol.inference_graph_setup(batch_size)
         
         # Prepare state and time variables
-        x_init = torch.randn((batch_size * n_atoms, 3))
+        x_init = torch.randn((batch_size * mol.n_atoms, 3))
         x_init = scatter_center_mol(x_init, g)
-        x_init = x_init.view(batch_size, n_atoms * 3)
+        x_init = x_init.view(batch_size, mol.n_atoms * 3)
         time_span = torch.linspace(0.0, 1.0, n_timesteps + 1)[:-1] # NOTE: we exclude the final time step to avoid numerical instability
         dt = (time_span[1] - time_span[0]).abs().item() # NOTE: we convert to a scalar for convenience
         

@@ -42,7 +42,6 @@ class ALPEnergy(BaseMoleculeEnergy):
         self,
         data_path: str,
         pdb_filename: str,
-        atom_encoding_filename: str = "atom_types_encoding.npy",
         dimensionality: int = 99,
         n_particles: int = 33,
         spatial_dim: int = 3,
@@ -72,10 +71,6 @@ class ALPEnergy(BaseMoleculeEnergy):
         self.debug_train_on_test = debug_train_on_test
         self.adj_list = None
         self.atom_types = None
-        self.atom_encoding_filename = atom_encoding_filename
-        self.atom_types_encoding = np.load(
-            data_path + f"/{atom_encoding_filename}", allow_pickle=True
-        ).item()
 
         self.energy_batch_size = energy_batch_size
 
