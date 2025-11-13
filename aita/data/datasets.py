@@ -91,7 +91,7 @@ class SimulationDataset(Dataset):
         g = self.molecules[mol_id].to_dgl_graph()
         g.ndata["x1"] = self.samples[index].squeeze(0) # (num_nodes, 3)
         return g
-    
+
     def get_train_dataloader(self, batch_size: int, num_workers: int = 0, pin_memory: bool = False) -> dgl.dataloading.GraphDataLoader:
         return dgl.dataloading.GraphDataLoader(
             self,

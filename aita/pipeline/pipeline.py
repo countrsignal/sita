@@ -11,7 +11,7 @@ from typing import Dict, List, Any
 from abc import ABC, abstractmethod
 
 from ..utils.logging import RankedLogger
-from ..data.features import DEBUG_FEATURIZERS, feats_from_pdb
+
 
 log = RankedLogger(__name__, on_rank_zero=True)
 
@@ -108,43 +108,3 @@ class Pipeline:
             for protocol in self.ebm_inference:
                 inputs = protocol(inputs)
         return inputs
-    
-    def inference_prep(
-        self,
-        data_dir: str,
-        model_type: str,
-        eval_molecules: List[str],
-    ) -> List[torch.Tensor]:
-
-        data_dir = Path(data_dir)
-        if not data_dir.exists():
-            raise FileNotFoundError(f"Data directory {data_dir} does not exist.")
-        
-        assert model_type in ["ebm", "flow"], "Model type must be either 'ebm' or 'flow'."
-        
-        if len(eval_molecules) == 0:
-            pdb_files = list((data_dir / "pdbs").glob("*.pdb"))
-        else:
-            pdb_files = [data_dir / "pdbs" / f"{molecule}.pdb" for molecule in eval_molecules]
-        
-        features = []
-        is_flow = model_type == "flow"
-        has_debug_mols = [pdb.stem in self.config.debug_molecules for pdb in pdb_files]
-        if any(has_debug_mols):
-            assert all(has_debug_mols), "Your list of eval molecules CANNOT contain a mix of debug and non-debug molecules."
-            for pdb in pdb_files:
-                features.append(
-                    DEBUG_FEATURIZERS[pdb.stem](return_concat=is_flow)
-                )
-        else:
-            atom_types_encoding = np.load(data_dir / "atom_types_encoding.npy", allow_pickle=True).item()
-            for pdb in pdb_files:
-                features.append(
-                    feats_from_pdb(pdb, atom_types_encoding, return_concat=is_flow)
-                )
-            # free up memory
-            del(atom_types_encoding)
-        # free up memory
-        del(pdb_files, has_debug_mols, is_flow, data_dir, model_type, eval_molecules)
-        gc.collect()
-        return features
