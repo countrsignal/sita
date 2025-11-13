@@ -212,11 +212,24 @@ class GVPConv(nn.Module):
 
     """GVP graph convolution on a homogenous graph."""
 
-    def __init__(self, scalar_size: int = 128, vector_size: int = 16, n_cp_feats: int = 0,
-                  scalar_activation=nn.SiLU, vector_activation=nn.Sigmoid,
-                  n_message_gvps: int = 1, n_update_gvps: int = 1,
-                  use_dst_feats: bool = False, rbf_dmax: float = 20, rbf_dim: int = 16,
-                  edge_feat_size: int = 0, coords_range=10, message_norm: Union[float, str] = 10, dropout: float = 0.0,vector_gating=True):
+    def __init__(
+        self,
+        scalar_size: int = 128,
+        vector_size: int = 16,
+        n_cp_feats: int = 0,
+        scalar_activation=nn.SiLU,
+        vector_activation=nn.Sigmoid,
+        n_message_gvps: int = 1,
+        n_update_gvps: int = 1,
+        use_dst_feats: bool = False,
+        rbf_dmax: float = 20,
+        rbf_dim: int = 16,
+        edge_feat_size: int = 0,
+        coords_range=10,
+        message_norm: Union[float, str] = 10,
+        dropout: float = 0.0,
+        vector_gating=True,
+    ):
         
         super().__init__()
 
@@ -399,7 +412,8 @@ class GVPConv(nn.Module):
         scalar_message, vector_message = self.edge_message((scalar_feats, vec_feats))
 
         return {"scalar_msg": scalar_message, "vec_msg": vector_message}
-    
+
+
 class NodePositionUpdate(nn.Module):
 
     def __init__(self, n_scalars, n_vec_channels, n_gvps: int = 3, n_cp_feats: int = 0):
@@ -430,3 +444,41 @@ class NodePositionUpdate(nn.Module):
     def forward(self, scalars: torch.Tensor, vectors: torch.Tensor):
         _, vector_updates = self.gvps((scalars, vectors))
         return vector_updates.squeeze(1)
+
+
+
+class EdgeUpdate(nn.Module):
+
+    def __init__(self, n_node_scalars, n_edge_feats, update_edge_w_distance=False, rbf_dim=16):
+        super().__init__()
+
+        self.update_edge_w_distance = update_edge_w_distance
+
+        input_dim = n_node_scalars*2 + n_edge_feats
+        if update_edge_w_distance:
+            input_dim += rbf_dim
+
+        self.edge_update_fn = nn.Sequential(
+            nn.Linear(input_dim, n_edge_feats),
+            nn.SiLU(),
+            nn.Linear(n_edge_feats, n_edge_feats),
+            nn.SiLU(),
+        )
+        self.edge_norm = nn.LayerNorm(n_edge_feats)
+
+    def forward(self, g: dgl.DGLGraph, node_scalars, edge_feats, d):
+
+        # get indicies of source and destination nodes
+        src_idxs, dst_idxs = g.edges()
+
+        mlp_inputs = [
+            node_scalars[src_idxs],
+            node_scalars[dst_idxs],
+            edge_feats,
+        ]
+
+        if self.update_edge_w_distance:
+            mlp_inputs.append(d)
+
+        edge_feats = self.edge_norm(edge_feats + self.edge_update_fn(torch.cat(mlp_inputs, dim=-1)))
+        return edge_feats
