@@ -31,4 +31,4 @@ flow:
   n_features: 24
 
 optimizer:
-  lr: 1e-3
+  lr: 5e-4

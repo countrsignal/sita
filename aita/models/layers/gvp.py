@@ -308,8 +308,9 @@ class GVPConv(nn.Module):
         self.message_layer_norm = GVPLayerNorm(self.scalar_size)
         self.update_layer_norm = GVPLayerNorm(self.scalar_size)
 
-        if isinstance(self.message_norm, str) and self.message_norm not in ['mean', 'sum']:
-            raise ValueError(f"message_norm must be either 'mean', 'sum', or a number, got {self.message_norm}")
+        if isinstance(self.message_norm, str):
+            if self.message_norm not in ['mean', 'sum']:
+                raise ValueError(f"message_norm must be either 'mean', 'sum', or a number, got {self.message_norm}")
         else:
             assert isinstance(self.message_norm, (float, int)), "message_norm must be either 'mean', 'sum', or a number"
 

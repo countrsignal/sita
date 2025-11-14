@@ -7,7 +7,7 @@ import torch.nn as nn
 from .modules.encoders import AtomEncoder
 from .modules.decoders import GVP_Decoder
  
- 
+
 ###################################
 # Classes
 ###################################
@@ -82,7 +82,7 @@ class VFV2(nn.Module):
         # node_repr: (num_nodes, n_hidden)
 
         # embed the edge features
-        edge_mask = ~torch.all(graph.edata["attr"] == 0, dim=-1).unsqueeze(dim=-1).to(dtype=graph.edata["attr"].dtype)
+        edge_mask = ~torch.all(graph.edata["attr"] == 0, dim=-1).unsqueeze(dim=-1)
         edge_repr = self.edge_embedding(graph.edata["attr"]) * edge_mask
         # edge_repr: (num_edges, n_hidden_edge)
 

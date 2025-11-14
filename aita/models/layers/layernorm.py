@@ -2,8 +2,6 @@ import torch
 import torch.nn.functional as F
 from torch import nn, sigmoid
 
-from .primitives import LinearNoBias
-
 
 class SafeLayerNorm(nn.Module):
     """
@@ -80,7 +78,7 @@ class AdaLN(nn.Module):
         self.a_norm = nn.LayerNorm(dim, elementwise_affine=False, bias=False)
         self.s_norm = nn.LayerNorm(dim_single_cond, bias=False)
         self.s_scale = nn.Linear(dim_single_cond, dim)
-        self.s_bias = LinearNoBias(dim_single_cond, dim)
+        self.s_bias = nn.Linear(dim_single_cond, dim, bias=False)
 
     def forward(self, a, s):
         a = self.a_norm(a)

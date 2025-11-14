@@ -63,7 +63,10 @@ class SimulationDataset(Dataset):
             prev_num_samples = len(samples)
             # find DCD file and PDB file
             dcd_file = list(data_dir.glob(f"{molecule}_{self.param}*.dcd"))[0]
-            pdb_file = self.data_path / "pdbs" / f"{molecule}.pdb"
+            if self.debug_molecule is not None:
+                pdb_file = self.data_path / "debug" / f"{self.debug_molecule}.pdb"
+            else:
+                pdb_file = self.data_path / "pdbs" / f"{molecule}.pdb"
             # load MD trajectory
             traj = md.load(dcd_file, top=pdb_file)
             # process coordinates data
