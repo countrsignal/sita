@@ -1,4 +1,4 @@
-from typing import Union
+from typing import Union, Any
 
 import dgl
 import torch
@@ -61,6 +61,11 @@ class VFV2(nn.Module):
             use_dst_feats=use_dst_feats,
             vector_gating=vector_gating,
         )
+    
+    def load_from_checkpoint(self, checkpoint_path: str, **kwargs: Any) -> "VFV2":
+        checkpoint = torch.load(checkpoint_path, **kwargs)
+        self.load_state_dict(checkpoint)
+        return self
 
     def forward(self, graph: dgl.DGLGraph) -> torch.Tensor:
         # initialize the coordinates and velocities

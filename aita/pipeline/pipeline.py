@@ -6,10 +6,13 @@ import hydra
 from omegaconf import DictConfig
 
 import gc
+from tqdm import tqdm
 from pathlib import Path
 from typing import Dict, List, Any
 from abc import ABC, abstractmethod
 
+from ..data.molecule import Molecule
+from ..interpolants import Interpolant
 from ..utils.logging import RankedLogger
 
 
@@ -108,3 +111,34 @@ class Pipeline:
             for protocol in self.ebm_inference:
                 inputs = protocol(inputs)
         return inputs
+
+    @staticmethod
+    def generate_from_flow(
+        n_samples: int,
+        samples_per_batch: int,
+        n_timesteps: int,
+        molecules: List[Molecule],
+        flow_model: torch.nn.Module,
+        interpolant: Interpolant,
+        method: str = "dopri5",
+    ) -> Dict[str, Dict[str, torch.Tensor]]:
+        """
+        Generate samples from the flow model.
+        """
+        assert n_samples % samples_per_batch == 0, "`n_samples` must be divisible by `samples_per_batch`"
+        n_batches = n_samples // samples_per_batch
+
+        samples_th = []
+        results_dict: Dict[str, Dict[str, torch.Tensor]] = {}
+        for mol in molecules:
+            for _ in tqdm(range(n_batches), desc=f"Generating samples for {mol.name}"):
+                batch_samples = interpolant.ode_integrate(
+                    mol=mol,
+                    model=flow_model,
+                    batch_size=samples_per_batch,
+                    n_timesteps=n_timesteps,
+                    method=method,
+                )
+                samples_th.append(batch_samples.detach().cpu())
+        results_dict[mol.name] = {"samples": torch.cat(samples_th, dim=0)}
+        return results_dict

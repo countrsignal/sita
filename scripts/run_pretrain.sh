@@ -4,7 +4,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --ntasks-per-node=6
 #SBATCH --exclude=g017,g018
-#SBATCH --time=1-0:00:00
+#SBATCH --time=2-0:00:00
 #SBATCH --partition=koes_gpu
 #SBATCH --mem=100G
 #SBATCH --mail-type=ALL
