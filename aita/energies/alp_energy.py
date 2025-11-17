@@ -24,6 +24,7 @@ from ..models.components.energy_utils import (
     compute_chirality_sign,
     find_chirality_centers,
 )
+from ..data.molecule import DEBUG_MOLECULES
 from ..models.components.optimal_transport import torus_wasserstein
 from ..utils.data_utils import remove_mean
 from ..utils.logging import RankedLogger
@@ -78,7 +79,10 @@ class ALPEnergy(BaseMoleculeEnergy):
 
         self.energy_batch_size = energy_batch_size
 
-        self.pdb_path = data_path + f"/pdbs/{pdb_filename}"
+        if pdb_filename.strip(".pdb") in DEBUG_MOLECULES:
+            self.pdb_path = data_path + f"/debug/{pdb_filename}"
+        else:
+            self.pdb_path = data_path + f"/pdbs/{pdb_filename}"
         logger.info(f"Loading pdb file from {self.pdb_path}")
         self.topology = md.load_topology(self.pdb_path)
         self.pdb = app.PDBFile(self.pdb_path)

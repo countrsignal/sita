@@ -1,3 +1,4 @@
 _target_: aita.data.datasets.GenerativeDataset
 data_path: ${paths.data_dir}
+split_json_filename: null
 debug_molecule: null

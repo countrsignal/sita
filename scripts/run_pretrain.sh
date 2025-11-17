@@ -9,7 +9,7 @@
 #SBATCH --mem=100G
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=dap181@pitt.edu
-#SBATCH --output=/net/pulsar/home/koes/dap181/labspace/aita/scripts/logs/aita-pretrain-flow-vfv2.out
+#SBATCH --output=/net/pulsar/home/koes/dap181/labspace/aita/scripts/logs/aita-pretrain-flow-vfv2-small.out
 
 
 ############################

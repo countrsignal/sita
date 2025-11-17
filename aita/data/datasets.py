@@ -4,6 +4,7 @@ from dgl.dataloading import GraphDataLoader
 from torch.utils.data import Dataset, DataLoader
 
 import gc
+import json
 import numpy as np
 import mdtraj as md
 from tqdm import tqdm
@@ -33,7 +34,7 @@ class SimulationDataset(Dataset):
           We convert to angstroms for training in aita.interpolants.Interpolant class.
     """
 
-    def __init__(self, data_path: str, param: str, anneal_type: str, debug_molecule: Optional[str] = None):
+    def __init__(self, data_path: str, param: str, anneal_type: str, split_json_filename: Optional[str], debug_molecule: Optional[str] = None):
         super(SimulationDataset, self).__init__()
 
         assert anneal_type in ["alchemical", "temperature"], "Anneal type must be either 'alchemical' or 'temperature'"
@@ -44,13 +45,17 @@ class SimulationDataset(Dataset):
         self.param = param
 
         if self.debug_molecule is not None:
+            # NOTE: if user provides a debug molecule, splits json uis ignored
+            self.splits = None
             self.molecules = {
                 debug_molecule: DEBUG_MOLECULES[self.debug_molecule].from_pdb(self.data_path / "debug" / f"{self.debug_molecule}.pdb")
             }
         else:
-            self.molecules = {
-                file.stem: Molecule.from_pdb(file) for file in (self.data_path / "pdbs").glob("*.pdb")
-            }
+            self.splits = json.load(open(self.data_path / split_json_filename, "r"))
+            self.molecules = {}
+            for pdb_file in self.splits["train"]:
+                pdb_path = self.data_path / "pdbs" / pdb_file
+                self.molecules[pdb_path.stem] = Molecule.from_pdb(pdb_path)
 
         self.backmap, self.samples = self.load_data()
 
@@ -104,24 +109,39 @@ class SimulationDataset(Dataset):
             num_workers=num_workers,
             pin_memory=pin_memory,
         )
+    
+    def eval_molecules(self, split: str) -> Dict[str, Molecule]:
+        assert split != "train", "Train split is not allowed for evaluation"
+        if self.debug_molecule is not None:
+            return {}
+        else:
+            eval_molecules = {}
+            for pdb_file in self.splits[split]:
+                pdb_path = self.data_path / "pdbs" / pdb_file
+                eval_molecules[pdb_path.stem] = Molecule.from_pdb(pdb_path)
+            return eval_molecules
 
 
 class GenerativeDataset(Dataset):
 
-    def __init__(self, data_path: str, debug_molecule: Optional[str] = None):
+    def __init__(self, data_path: str, split_json_filename: Optional[str], debug_molecule: Optional[str] = None):
         super(GenerativeDataset, self).__init__()
 
         self.debug_molecule = debug_molecule
         self.data_path = Path(data_path)
 
         if self.debug_molecule is not None:
+            # NOTE: if user provides a debug molecule, splits json is ignored
+            self.splits = None
             self.molecules = {
                 debug_molecule: DEBUG_MOLECULES[self.debug_molecule].from_pdb(self.data_path / "debug" / f"{self.debug_molecule}.pdb")
             }
         else:
-            self.molecules = {
-                file.stem: Molecule.from_pdb(file) for file in (self.data_path / "pdbs").glob("*.pdb")
-            }
+            self.splits = json.load(open(self.data_path / split_json_filename, "r"))
+            self.molecules = {}
+            for pdb_file in self.splits["train"]:
+                pdb_path = self.data_path / "pdbs" / pdb_file
+                self.molecules[pdb_path.stem] = Molecule.from_pdb(pdb_path)
 
         # dictionary for mapping from sample indices to molecule ids
         self.backmap = {}
@@ -221,3 +241,14 @@ class GenerativeDataset(Dataset):
                 pin_memory=pin_memory,
                 collate_fn=self._ebm_collate_fn,
             )
+
+    def eval_molecules(self, split: str) -> Dict[str, Molecule]:
+        assert split != "train", "Train split is not allowed for evaluation"
+        if self.debug_molecule is not None:
+            return {}
+        else:
+            eval_molecules = {}
+            for pdb_file in self.splits[split]:
+                pdb_path = self.data_path / "pdbs" / pdb_file
+                eval_molecules[pdb_path.stem] = Molecule.from_pdb(pdb_path)
+            return eval_molecules

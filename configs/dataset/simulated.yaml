@@ -2,4 +2,5 @@ _target_: aita.data.datasets.SimulationDataset
 data_path: ${paths.data_dir}
 param: null
 anneal_type: null
+split_json_filename: null
 debug_molecule: null
