@@ -7,10 +7,12 @@ from abc import ABC, abstractmethod
 from scipy.optimize import linear_sum_assignment
 
 from .utils.data_utils import nm_to_angstrom
+from .utils.couplings import ot_coupling, bacthed_kabsch_umeyama
 from .utils.graph_utils import (
     scatter_center_mol,
     flatten_along_spatial,
     flatten_along_batch,
+    nodes_to_padded_tensor,
 )
 
 
@@ -81,7 +83,17 @@ class Plan(ABC):
             y = flatten_along_batch(y, g)
             return x, y
         elif self.coupling_plan == "ku":
-            raise NotImplementedError("Kabsch-Umeyama coupling is not implemented yet.")
+            x = nodes_to_padded_tensor(x, g)
+            y = nodes_to_padded_tensor(y, g)
+            mask = (
+                torch.arange(g.batch_num_nodes().max())
+                .unsqueeze(0)
+                .lt(g.batch_num_nodes().unsqueeze(1))
+            )
+            y = bacthed_kabsch_umeyama(ref=x, pivot=y, mask=mask)
+            x = flatten_along_batch(x.view(g.batch_size, g.batch_num_nodes().max() * 3), g)
+            y = flatten_along_batch(y.view(g.batch_size, g.batch_num_nodes().max() * 3), g)
+            return x, y
         else:
             return x, y
 
@@ -172,9 +184,7 @@ class TrigPlan(Plan):
         z = scatter_center_mol(z, g)
 
         # compute coupling
-        if self.coupling_plan == "ot":
-            # NOTE: only use OT when all molecules in the dataset have the same number of atoms
-            x, z = self.compute_coupling(x, z, g)
+        x, z = self.compute_coupling(x, z, g)
         
         # convert to angstroms
         # NOTE: data is in nanometers by default, so we convert to angstroms

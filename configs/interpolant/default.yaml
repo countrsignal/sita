@@ -1,7 +1,7 @@
 _target_: aita.interpolants.Interpolant
 _partial_: false
-rtol: 1e-3
-atol: 1e-3
+rtol: 1e-4
+atol: 1e-4
 defaults:
   - plan:
     - trig

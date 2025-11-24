@@ -77,6 +77,40 @@ def flatten_along_batch(x: torch.Tensor, g: dgl.DGLGraph) -> torch.Tensor:
     return x_reshaped[mask]
 
 
+def nodes_to_padded_tensor(x: torch.Tensor, g: dgl.DGLGraph) -> torch.Tensor:
+    """
+    Convert node-wise features into a batched tensor with zero padding.
+
+    Args:
+        x: Tensor of node features, shape (total_nodes, 3)
+        g: Batched DGLGraph describing the molecules
+
+    Returns:
+        Tensor of shape (batch_size, max_num_nodes, 3) where shorter graphs are
+        padded with zeros.
+    """
+    if x.dim() != 2 or x.size(-1) != 3:
+        raise ValueError(f"Expected node tensor of shape (total_nodes, 3), got {tuple(x.shape)}")
+
+    batch_size = g.batch_size
+    num_nodes_per_graph = g.batch_num_nodes().to(x.device)
+
+    if x.size(0) != int(num_nodes_per_graph.sum().item()):
+        raise ValueError("Node tensor length does not match total number of graph nodes")
+
+    max_num_nodes = int(num_nodes_per_graph.max().item())
+    padded = x.new_zeros(batch_size, max_num_nodes, 3)
+
+    batch_index = get_batch_indices(g)
+    node_ids = torch.arange(x.size(0), device=x.device)
+    offsets = torch.cumsum(num_nodes_per_graph, dim=0) - num_nodes_per_graph
+    local_index = node_ids - offsets[batch_index]
+
+    padded[batch_index, local_index] = x
+
+    return padded
+
+
 def scatter_center_mol(xyz: torch.Tensor, g: dgl.DGLGraph) -> torch.Tensor:
     """
     Center coordinates at the origin for each molecule using torch.scatter operations.

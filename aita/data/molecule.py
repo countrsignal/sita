@@ -91,7 +91,7 @@ class Molecule:
         mol = Chem.MolFromPDBFile(pdb_path, removeHs=False, sanitize=False)
         assert mol is not None, f"Failed to parse PDB file {pdb_path}"
         atom_dict, bond_dict = parse_mol_rdkit(mol)
-        residue_type_one_hot, atom_one_hot = categorical_featurizer(ATOM_TYPES_ENCODING, atom_dict, return_concat=False)
+        residue_type_one_hot, atom_one_hot = categorical_featurizer(atom_dict, ATOM_TYPES_ENCODING, return_concat=False)
         return Molecule(
             name=Path(pdb_path).stem,
             atom_dict=atom_dict,

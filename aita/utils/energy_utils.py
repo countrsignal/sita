@@ -1,11 +1,27 @@
+import torch
+import numpy as np
+import mdtraj as md
+
+import scipy
+import signal
+from tqdm import tqdm
 from statistics import median
+from typing import Tuple
 
 import networkx as nx
-import networkx.algorithms.isomorphism as iso
-import numpy as np
-import scipy
-import torch
 from networkx import isomorphism
+import networkx.algorithms.isomorphism as iso
+
+
+def atom_types_from_topology(topology: md.Topology) -> torch.Tensor:
+    atom_dict = {"C": 0, "H":1, "N":2, "O":3, "S":4}
+    atom_types = np.array([atom_dict[atom.name[0]] for atom in topology.atoms])
+    return torch.from_numpy(atom_types)
+
+
+def adjacency_list_from_topology(topology: md.Topology) -> torch.Tensor:
+    bb_idx = topology.select("backbone")
+    return torch.from_numpy(np.array([(b.atom1.index, b.atom2.index) for b in topology.bonds], dtype=np.int32))
 
 
 def create_adjacency_list(distance_matrix, atom_types):
@@ -56,6 +72,30 @@ def align_topology(sample, reference, atom_types):
     final_idx = list(GM.mapping.values())
     sample[initial_idx] = sample[final_idx]
     return sample, is_isomorphic
+
+
+def gather_aligned_samples(samples: torch.Tensor, adj_list: torch.Tensor, atom_types: torch.Tensor):
+
+    def handler(signum, frame):
+        raise TimeoutError("Timeout while gathering aligned samples")
+    
+    aligned_idx = []
+    aligned_samples = []
+    for i, sample in enumerate(tqdm(samples, desc="Aligning samples")):
+
+        signal.signal(signal.SIGALRM, handler)
+        signal.alarm(5)
+        try:
+            aligned_sample, is_isomorphic = align_topology(sample.numpy(), adj_list.tolist(), atom_types.numpy())
+        except TimeoutError:
+            print(f"Timeout while aligning sample {i}")
+            continue
+        signal.alarm(0)
+
+        if is_isomorphic:
+            aligned_idx.append(i)
+            aligned_samples.append(torch.from_numpy(aligned_sample))
+    return torch.stack(aligned_samples), torch.tensor(aligned_idx)
 
 
 # check if chirality is the same
@@ -130,3 +170,29 @@ def check_symmetry_change(
     """
     perm_sign = compute_chirality_sign(coords, chirality_centers)
     return (perm_sign != reference_signs.to(coords)).any(dim=-1)
+
+
+def rectify_chirality(
+    samples: torch.Tensor,
+    reference_samples: torch.Tensor,
+    adj_list: torch.Tensor,
+    atom_types: torch.Tensor,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Rectify the chirality of a batch of samples.
+    """
+    chirality_centers = find_chirality_centers(adj_list, atom_types)
+    reference_signs = compute_chirality_sign(reference_samples[[1]], chirality_centers)
+    symmetry_change = check_symmetry_change(samples, chirality_centers, reference_signs)
+    samples[symmetry_change] *= -1
+    symmetry_change = check_symmetry_change(samples, chirality_centers, reference_signs)
+    samples = samples[~symmetry_change]
+    return samples, symmetry_change
+
+
+def process_generated_samples(samples: torch.Tensor, ref_md_data: md.Trajectory):
+    atom_types = atom_types_from_topology(ref_md_data.topology)
+    adj_list = adjacency_list_from_topology(ref_md_data.topology)
+    aligned_samples, aligned_idxs = gather_aligned_samples(samples, adj_list, atom_types)
+    samples, symmetry_change = rectify_chirality(aligned_samples, ref_md_data.xyz, adj_list, atom_types)
+    return samples

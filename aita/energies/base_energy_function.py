@@ -1,11 +1,11 @@
 from abc import ABC, abstractmethod
 from typing import Optional
 
-import numpy as np
 import torch
+import numpy as np
 from pytorch_lightning.loggers import WandbLogger
-from aita.models.components.replay_buffer import ReplayBuffer
-from aita.utils.data_utils import remove_mean
+
+from ..utils.data_utils import remove_mean
 
 
 def sample_from_tensor(x, n_samples):
@@ -158,7 +158,6 @@ class BaseEnergyFunction(ABC):
         self,
         latest_samples: torch.Tensor,
         latest_energies: torch.Tensor,
-        replay_buffer: ReplayBuffer,
         wandb_logger: WandbLogger,
     ) -> None:
         pass

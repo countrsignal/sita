@@ -1,21 +1,17 @@
-from functools import partial
+import torch
+
+import PIL
+import matplotlib.pyplot as plt
 from typing import Optional
 
-import matplotlib.pyplot as plt
-import numpy as np
-import PIL
-import torch
-from bgflow import Energy
-from bgflow.utils import distance_vectors, distances_from_vectors
-from hydra.utils import get_original_cwd
 from lightning.pytorch.loggers import WandbLogger
-from scipy.interpolate import CubicSpline
-from aita.energies.base_energy_function import BaseEnergyFunction
-from aita.models.components.replay_buffer import ReplayBuffer
-from aita.utils.data_utils import remove_mean
+
+from .base_energy_function import BaseEnergyFunction
+from ..utils.data_utils import remove_mean
 
 
 class BaseMoleculeEnergy(BaseEnergyFunction):
+
     def __init__(
         self,
         dimensionality: int,

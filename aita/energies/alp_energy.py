@@ -19,14 +19,13 @@ from .components.tica import plot_tic01, run_tica, tica_features
 from ..models.components.distribution_distances import (
     compute_distribution_distances_with_prefix,
 )
-from ..models.components.energy_utils import (
+from ..utils.metrics import torus_wasserstein
+from ..utils.energy_utils import (
     check_symmetry_change,
     compute_chirality_sign,
     find_chirality_centers,
 )
 from ..data.molecule import DEBUG_MOLECULES
-from ..models.components.optimal_transport import torus_wasserstein
-from ..utils.data_utils import remove_mean
 from ..utils.logging import RankedLogger
 
 
@@ -202,7 +201,7 @@ class ALPEnergy(BaseMoleculeEnergy):
             latest_samples_not_resampled=latest_samples_not_resampled,
             prefix=prefix,
         )
-        logging.info("Base plots done")
+        logger.info("Base plots done")
 
         metrics = {}
         if self.should_normalize:
@@ -220,7 +219,7 @@ class ALPEnergy(BaseMoleculeEnergy):
                 wandb_logger=wandb_logger,
             )
         except ValueError as e:
-            logging.error(f"Error in plotting Ramachandran: {e}")
+            logger.error(f"Error in plotting Ramachandran: {e}")
         if latest_samples_not_resampled is not None:
             try:
                 self.plot_ramachandran(
@@ -229,11 +228,11 @@ class ALPEnergy(BaseMoleculeEnergy):
                     wandb_logger=wandb_logger,
                 )
             except ValueError as e:
-                logging.error(f"Error in plotting Ramachandran: {e}")
+                logger.error(f"Error in plotting Ramachandran: {e}")
             samples_metrics = self.get_ramachandran_metrics(
                 latest_samples[:num_eval_samples], prefix=prefix + "/rama/not_resampled"
             )
-        logging.info("Ramachandran metrics computed (generated samples)")
+        logger.info("Ramachandran metrics computed (generated samples)")
         metrics.update(samples_metrics)
 
         if "val" in prefix:
@@ -269,8 +268,6 @@ class ALPEnergy(BaseMoleculeEnergy):
             }
         )
         self.plot_tica(None, prefix=prefix + "/ground_truth", wandb_logger=wandb_logger)
-
-        # log rama metrics for the reference samples
 
         return metrics
 
@@ -463,8 +460,6 @@ class ALPEnergy(BaseMoleculeEnergy):
 
         if wandb_logger is not None:
             wandb_logger.log_image(f"{prefix}/tica/plot", [fig])
-
+            plt.close(fig)
         else:
             return fig
-
-        plt.close(fig)

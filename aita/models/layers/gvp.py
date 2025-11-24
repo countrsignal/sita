@@ -43,6 +43,8 @@ def _rbf(D, D_min=0., D_max=20., D_count=16):
     RBF = torch.exp(-((D_expand - D_mu) / D_sigma) ** 2)
     return RBF
 
+
+@torch.compile
 class GVP(nn.Module):
     def __init__(
         self,
@@ -75,8 +77,6 @@ class GVP(nn.Module):
             wcp_k = 1/math.sqrt(dim_vectors_in)
             self.Wcp = torch.zeros(dim_vectors_in, n_cp_feats*2, dtype=torch.float32).uniform_(-wcp_k, wcp_k)
             self.Wcp = nn.Parameter(self.Wcp)
-
-        
 
         # create Wu matrix
         if n_cp_feats > 0: # the number of vector features going into Wu is increased by n_cp_feats if we are using cross-product features

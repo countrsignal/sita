@@ -38,6 +38,13 @@ log = RankedLogger(__name__, on_rank_zero=True)
 # functions
 ###################################
 
+def has_tensor_cores() -> bool:
+    if not torch.cuda.is_available():
+        return False
+    cap = torch.cuda.get_device_capability()
+    return cap >= (8, 0)  # Ampere+ devices expose FP32 tensor cores
+
+
 @task_wrapper
 def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """Trains the model. Can additionally evaluate on a testset, using best weights obtained during
@@ -53,6 +60,10 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     if cfg.get("seed"):
         L.seed_everything(cfg.seed, workers=True)
     
+    # set float32 matmul precision to high if tensor cores are available
+    if has_tensor_cores():
+        torch.set_float32_matmul_precision('medium' | 'high')
+
     task_name = cfg.get("task_name")
     is_flow = task_name.endswith("flow")
 

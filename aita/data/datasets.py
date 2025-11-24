@@ -15,6 +15,10 @@ from typing import Optional, List, Dict, Tuple, Union
 
 from .features import ATOM_TYPES_ENCODING
 from .molecule import Molecule, DEBUG_MOLECULES
+from ..utils.logging import RankedLogger
+
+
+log = RankedLogger(__name__, on_rank_zero=True)
 
 
 ###################################
@@ -68,6 +72,12 @@ class SimulationDataset(Dataset):
             prev_num_samples = len(samples)
             # find DCD file and PDB file
             dcd_file = list(data_dir.glob(f"{molecule}_{self.param}*.dcd"))[0]
+            
+            ############################################
+            if self.debug_molecule is not None:
+                log.log(20, f"Loading DCD file: {dcd_file}")
+            ############################################
+
             if self.debug_molecule is not None:
                 pdb_file = self.data_path / "debug" / f"{self.debug_molecule}.pdb"
             else:
