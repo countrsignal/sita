@@ -1,6 +1,6 @@
 _target_: aita.models.vector_field_v2.VFV2
 n_vec: 32
-n_features: 21
+n_features: null
 edge_feat_size: 9
 n_layers: 7
 n_hidden_nodes: 128
