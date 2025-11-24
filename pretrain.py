@@ -62,7 +62,7 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     
     # set float32 matmul precision to high if tensor cores are available
     if has_tensor_cores():
-        torch.set_float32_matmul_precision('medium' | 'high')
+        torch.set_float32_matmul_precision("high")
 
     task_name = cfg.get("task_name")
     is_flow = task_name.endswith("flow")
