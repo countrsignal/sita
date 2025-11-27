@@ -25,7 +25,10 @@ logger:
 dataset:
   param: "1200"
   anneal_type: "temperature"
-  split_json_filename: "dipeptide_split.json"
+  split_json_filename: "dipeptide_splits.json"
+
+loader:
+  batch_size: 256
 
 flow:
   n_features: 75
