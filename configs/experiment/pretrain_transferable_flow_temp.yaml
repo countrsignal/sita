@@ -32,6 +32,7 @@ loader:
 
 flow:
   n_features: 75
+  n_layers: 8
 
 optimizer:
-  lr: 1e-3
+  lr: 5e-4

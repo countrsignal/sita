@@ -253,3 +253,38 @@ class TrigPlan(Plan):
         var = sigma_t**2 - reverse_alpha_ratio * d_sigma_t * sigma_t
         score = (reverse_alpha_ratio * velocity - mean) / var
         return score
+    
+    def compute_tsr(self, t: torch.Tensor, rho: float, k: float) -> torch.Tensor:
+        half_pi = torch.pi / 2
+        tan_t = torch.tan(t * half_pi) # TODO: clamp
+        cot_t = 1 / tan_t
+        snr = tan_t ** 2
+        r2 = rho ** 2
+        r2_over_k = r2 / k
+        tsr = (snr * r2 + 1) / (snr * r2_over_k + 1)
+        return tsr
+
+    def temporal_score_rescale(
+        self,
+        k: float,
+        rho: float,
+        t: torch.Tensor,
+        x: torch.Tensor,
+        velocity: torch.Tensor,
+    )  -> torch.Tensor:
+        # NOTE: at inference time t could be a tensor with no dimension
+        if t.dim() == 0:
+            t = t.view(1)
+
+        t = expand_t_like(t, x)
+
+        half_pi = torch.pi / 2
+        tan_t = torch.tan(t * half_pi) # TODO: clamp
+        cot_t = 1 / torch.clamp_min(tan_t, min=1e-3)
+        snr = tan_t ** 2
+
+        r2 = rho ** 2
+        r2_over_k = r2 / k
+        tsr = (snr * r2 + 1) / (snr * r2_over_k + 1)
+
+        return tsr * velocity + half_pi * cot_t * (1 - tsr) * x

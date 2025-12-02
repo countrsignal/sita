@@ -19,7 +19,7 @@ from .components.tica import plot_tic01, run_tica, tica_features
 from ..models.components.distribution_distances import (
     compute_distribution_distances_with_prefix,
 )
-from ..utils.metrics import torus_wasserstein
+from ..utils.inference_utils import torus_wasserstein
 from ..utils.energy_utils import (
     check_symmetry_change,
     compute_chirality_sign,

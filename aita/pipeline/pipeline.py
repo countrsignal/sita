@@ -8,8 +8,8 @@ from omegaconf import DictConfig
 import gc
 from tqdm import tqdm
 from pathlib import Path
-from typing import Dict, List, Any
 from abc import ABC, abstractmethod
+from typing import Dict, List, Any, Optional
 
 from ..data.molecule import Molecule
 from ..interpolants import Interpolant
@@ -121,6 +121,7 @@ class Pipeline:
         flow_model: torch.nn.Module,
         interpolant: Interpolant,
         method: str = "dopri5",
+        tsr_params: Optional[Dict[str, float]] = None,
     ) -> Dict[str, Dict[str, torch.Tensor]]:
         """
         Generate samples from the flow model.
@@ -138,6 +139,7 @@ class Pipeline:
                     batch_size=samples_per_batch,
                     n_timesteps=n_timesteps,
                     method=method,
+                    tsr_params=tsr_params,
                 )
                 samples_th.append(batch_samples.detach().cpu())
         results_dict[mol.name] = {"samples": torch.cat(samples_th, dim=0)}

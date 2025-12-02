@@ -3,7 +3,7 @@ import torch
 from torchdiffeq import odeint_adjoint
 
 from functools import partial
-from typing import Union, Tuple
+from typing import Union, Tuple, Dict, Optional
 
 from .plans import Plan, PlanLite
 from .data.molecule import Molecule
@@ -29,15 +29,30 @@ class Interpolant:
     #############################################################################################################################
     # ODE mechanics
     #############################################################################################################################
-    def ode_forward(self, t: Union[float, torch.Tensor], x: torch.Tensor, g: dgl.DGLGraph, model: torch.nn.Module) -> torch.Tensor:
+    def ode_forward(
+        self,
+        t: Union[float, torch.Tensor],
+        x: torch.Tensor,
+        g: dgl.DGLGraph,
+        model: torch.nn.Module,
+        tsr_params: Optional[Dict[str, float]] = None,
+    ) -> torch.Tensor:
         # NOTE: this function is intended to called inside the torchdiffeq.odeint function
         # NOTE: instide the torchdiffeq.odeint function, x is a 2D tensor with shape (batch_size, num_nodes * 3)
         # NOTE: we assume the provided dgl graph already contains the categorical features
         g.ndata["xt"] = x.view(g.num_nodes(), 3) # [batch_size * num_nodes, 3]
         g.ndata["t"] = t * torch.ones((g.num_nodes(), 1), device=g.device) # [batch_size * num_nodes, 1]
         velocity = model(g)
+
+        # reshape velocity to (batch_size, n_paticles * 3)
         n_paticles = g.num_nodes() // g.batch_size # it is expected that we only generate conformers for one molecular species at a time
-        return velocity.view(g.batch_size, n_paticles * 3)
+        velocity = velocity.view(g.batch_size, n_paticles * 3)
+
+        # Tenperal Score Rescaling (TSR)
+        if tsr_params is not None:
+            velocity = self.plan.temporal_score_rescale(**tsr_params, t=t, x=x, velocity=velocity)
+
+        return velocity
     
     @torch.no_grad()
     def ode_integrate(
@@ -47,6 +62,7 @@ class Interpolant:
         n_timesteps: int,
         model: torch.nn.Module,
         method: str = "dopri5",
+        tsr_params: Optional[Dict[str, float]] = None,
     ) -> torch.Tensor:
         """
         Integrate the ODE to generate conformers for a given molecule defined by the categorical features.
@@ -71,7 +87,7 @@ class Interpolant:
         x_init = torch.randn((batch_size * mol.n_atoms, 3))
         x_init = scatter_center_mol(x_init, g)
         x_init = x_init.view(batch_size, mol.n_atoms * 3)
-        time_span = torch.linspace(0.0, 1.0, n_timesteps + 1)
+        time_span = torch.linspace(0.0, 1.0, n_timesteps + 1)[:-1] # NOTE: we exclude the final time step to avoid numerical instability
 
         # move data to device
         g = g.to(device)
@@ -79,7 +95,7 @@ class Interpolant:
         time_span = time_span.to(device)
 
         # create the forward function
-        forward_fn = partial(self.ode_forward, g=g, model=model)
+        forward_fn = partial(self.ode_forward, g=g, model=model, tsr_params=tsr_params)
 
         # integrate the ODE
         xs = odeint_adjoint(forward_fn, x_init, time_span, method=method, rtol=self.rtol, atol=self.atol, adjoint_params=())
@@ -104,7 +120,7 @@ class Interpolant:
         dw = dw.view(x.shape)
 
         # Euler-Maruyama update
-        drift  = velocity + diffusion_ceoff * score
+        drift  = velocity + diffusion_ceoff * 1.0 * score
         mean_x = x + drift * dt
         return mean_x + torch.sqrt(diffusion_ceoff) * dw
 

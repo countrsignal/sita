@@ -3,7 +3,7 @@ from torch import nn, einsum
 import math
 import dgl
 import dgl.function as fn
-from typing import Union
+from typing import Union, Optional, Type
 
 # Import helpers from the original file
 from aita.models.layers.gvp import (
@@ -64,6 +64,41 @@ def gvp_forward_optimized(
     vectors_out = vectors_activation_fn(gating) * Vu
 
     return feats_out, vectors_out
+
+
+@torch.compile
+def node_position_update_forward(
+    gvp_stack: nn.Module,
+    scalars: torch.Tensor,
+    vectors: torch.Tensor,
+):
+    """Compiled helper to run the stacked GVPs used for coordinate updates."""
+    _, vector_updates = gvp_stack((scalars, vectors))
+    return vector_updates.squeeze(1)
+
+
+@torch.compile
+def edge_update_forward(
+    edge_update_fn: nn.Module,
+    edge_norm: nn.Module,
+    node_scalars: torch.Tensor,
+    edge_feats: torch.Tensor,
+    src_idxs: torch.Tensor,
+    dst_idxs: torch.Tensor,
+    distance_feats: Optional[torch.Tensor] = None,
+):
+    """Compiled helper for the edge feature update residual block."""
+    src = torch.index_select(node_scalars, 0, src_idxs)
+    dst = torch.index_select(node_scalars, 0, dst_idxs)
+
+    if distance_feats is not None:
+        update_inputs = torch.cat((src, dst, edge_feats, distance_feats), dim=-1)
+    else:
+        update_inputs = torch.cat((src, dst, edge_feats), dim=-1)
+
+    delta = edge_update_fn(update_inputs)
+    return edge_norm(edge_feats + delta)
+
 
 class OptimizedGVP(nn.Module):
     def __init__(
@@ -362,4 +397,104 @@ class OptimizedGVPConv(nn.Module):
         scalar_message, vector_message = self.edge_message((scalar_feats, vec_feats))
 
         return {"scalar_msg": scalar_message, "vec_msg": vector_message}
+
+
+class OptimizedNodePositionUpdate(nn.Module):
+    """Stacked OptimizedGVP blocks for fast coordinate refinement."""
+
+    def __init__(
+        self,
+        n_scalars: int,
+        n_vec_channels: int,
+        n_gvps: int = 3,
+        n_cp_feats: int = 0,
+        vector_gating: bool = True,
+    ):
+        super().__init__()
+
+        if n_gvps < 1:
+            raise ValueError("n_gvps must be >= 1")
+
+        gvp_layers = []
+        for idx in range(n_gvps):
+            last_layer = idx == (n_gvps - 1)
+            gvp_layers.append(
+                OptimizedGVP(
+                    dim_feats_in=n_scalars,
+                    dim_feats_out=n_scalars,
+                    dim_vectors_in=n_vec_channels,
+                    dim_vectors_out=1 if last_layer else n_vec_channels,
+                    n_cp_feats=n_cp_feats,
+                    vectors_activation=nn.Identity() if last_layer else nn.Sigmoid(),
+                    vector_gating=vector_gating,
+                )
+            )
+
+        self.gvps = nn.Sequential(*gvp_layers)
+
+    def forward(self, scalars: torch.Tensor, vectors: torch.Tensor):
+        return node_position_update_forward(self.gvps, scalars, vectors)
+
+
+class OptimizedEdgeUpdate(nn.Module):
+    """JIT-compiled edge update with optional RBF distance conditioning."""
+
+    def __init__(
+        self,
+        n_node_scalars: int,
+        n_edge_feats: int,
+        update_edge_w_distance: bool = False,
+        rbf_dim: int = 16,
+        activation: Type[nn.Module] = nn.SiLU,
+    ):
+        super().__init__()
+
+        self.update_edge_w_distance = update_edge_w_distance
+
+        input_dim = (n_node_scalars * 2) + n_edge_feats
+        if update_edge_w_distance:
+            input_dim += rbf_dim
+
+        self.edge_update_fn = nn.Sequential(
+            nn.Linear(input_dim, n_edge_feats),
+            activation(),
+            nn.Linear(n_edge_feats, n_edge_feats),
+            activation(),
+        )
+        self.edge_norm = nn.LayerNorm(n_edge_feats)
+
+    def forward(
+        self,
+        g: dgl.DGLGraph,
+        node_scalars: torch.Tensor,
+        edge_feats: torch.Tensor,
+        d: Optional[torch.Tensor] = None,
+    ):
+        src_idxs, dst_idxs = g.edges()
+        device = node_scalars.device
+
+        if src_idxs.device != device:
+            src_idxs = src_idxs.to(device)
+            dst_idxs = dst_idxs.to(device)
+
+        if edge_feats.device != device:
+            edge_feats = edge_feats.to(device)
+
+        distance_feats = None
+        if self.update_edge_w_distance:
+            if d is None:
+                raise ValueError(
+                    "Distance features `d` must be provided when update_edge_w_distance=True."
+                )
+            distance_feats = d.to(device) if d.device != device else d
+
+        return edge_update_forward(
+            self.edge_update_fn,
+            self.edge_norm,
+            node_scalars,
+            edge_feats,
+            src_idxs,
+            dst_idxs,
+            distance_feats,
+        )
 
