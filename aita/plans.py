@@ -279,7 +279,7 @@ class TrigPlan(Plan):
         t = expand_t_like(t, x)
 
         half_pi = torch.pi / 2
-        tan_t = torch.tan(t * half_pi) # TODO: clamp
+        tan_t = torch.tan(t * half_pi)
         cot_t = 1 / torch.clamp_min(tan_t, min=1e-3)
         snr = tan_t ** 2
 

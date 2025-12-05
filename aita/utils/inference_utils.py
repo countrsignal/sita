@@ -107,13 +107,13 @@ def map_chirality_batch(samples: np.ndarray) -> np.ndarray:
 
     # carbon atoms
     carbon_idx = np.array([ 1, 10, 18])
-    carbon_pos = samples[:, carbon_idx]
-    carbon_distances = np.linalg.norm(samples[:, [8]] - carbon_pos, axis=-1)
+    carbon_samples = samples[:, carbon_idx]
+    carbon_distances = np.linalg.norm(samples[:, [8]] - carbon_samples, axis=-1)
     # likely index of c beta atom
     cb_idx = np.where(carbon_distances==carbon_distances.min(1, keepdims=True))
 
-    back_bone_samples = samples[:, np.array([8,6,14,16])]
-    cb_samples = samples[:, cb_idx[0], carbon_pos[cb_idx[1]]][:, None, :]
+    back_bone_samples = samples[:, np.array([8,6,14])]
+    cb_samples = samples[cb_idx[0], carbon_idx[cb_idx[1]]] [:, None, :]
     chirality = determine_chirality_batch(np.concatenate([back_bone_samples, cb_samples], axis=1))
     samples_mapped = samples.copy()
     samples_mapped[chirality=="D"] *= -1

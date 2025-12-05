@@ -14,7 +14,7 @@ import mdtraj as md
 import torch
 from lightning.pytorch.loggers import WandbLogger
 
-from .metrics import adp_torsion_angles, map_chirality_batch, estimate_fes
+from .inference_utils import adp_torsion_angles, map_chirality_batch, estimate_fes
 
 
 def clean_up_plots(func):
