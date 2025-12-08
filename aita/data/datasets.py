@@ -254,7 +254,7 @@ class GenerativeDataset(Dataset):
 
     def eval_molecules(self, split: str) -> Dict[str, Molecule]:
         assert split != "train", "Train split is not allowed for evaluation"
-        if self.debug_molecule is not None:
+        if self.splits is None:
             return {}
         else:
             eval_molecules = {}
@@ -262,3 +262,124 @@ class GenerativeDataset(Dataset):
                 pdb_path = self.data_path / "pdbs" / pdb_file
                 eval_molecules[pdb_path.stem] = Molecule.from_pdb(pdb_path)
             return eval_molecules
+
+
+class GenerativeDatasetSingleMolecule(Dataset):
+
+    def __init__(self, data_path: str, pdb_id: str):
+        super(GenerativeDatasetSingleMolecule, self).__init__()
+
+        self.data_path = Path(data_path)
+        self.pdb_id = pdb_id
+
+        # NOTE: for single molecule datasets, we do not use splits and we load the molecule from the pdb file
+        if pdb_id in DEBUG_MOLECULES:
+            self.pdb_path = self.data_path / "debug" / f"{pdb_id}.pdb"
+            self.molecules = {
+                pdb_id: DEBUG_MOLECULES[pdb_id].from_pdb(self.pdb_path)
+            }
+        else:
+            self.pdb_path = self.data_path / "pdbs" / f"{pdb_id}.pdb"
+            self.molecules = {
+                pdb_id: Molecule.from_pdb(self.pdb_path)
+            }
+
+        # NOTE: the rest of the machanics should be the same as the GenerativeDataset class
+        # dictionary for mapping from sample indices to molecule ids
+        self.backmap = {}
+        # samples cache
+        self._cache = []
+        # property to distinguish training phases
+        self._training_sampler = False
+
+    @property
+    def cache(self):
+        return self._cache
+
+    @cache.setter
+    def cache(self, value: List[torch.Tensor]) -> None:
+        self._cache = value
+
+    def clear_cache(self) -> None:
+        self._cache = []
+
+    @property
+    def training_sampler(self):
+        return self._training_sampler
+
+    @training_sampler.setter
+    def training_sampler(self, value: bool) -> None:
+        self._training_sampler = value
+
+    def update_dataset(self, mol_id: str, samples: List[torch.Tensor]) -> None:
+        prev_num_samples = len(self.cache)
+        # add samples to cache
+        self.cache.extend(samples)
+        # update backmap
+        num_samples_enrolled = len(self.cache)
+        self.backmap.update({idx: mol_id for idx in list(range(prev_num_samples, num_samples_enrolled))})
+        # clear memory
+        del(samples, num_samples_enrolled, prev_num_samples)
+        gc.collect()
+
+    def __len__(self):
+        return len(self.cache)
+
+    def __getitem__(self, index):
+        # convert one-hot atom types to tokens
+        mol_id  = self.backmap[index]
+
+        if self.training_sampler:
+            # NOTE: when training the flow model
+            g = self.molecules[mol_id].to_dgl_graph()
+            g.ndata["x1"] = self.cache[index].squeeze(0) # (num_nodes, 3)
+            return g
+        else:
+            # NOTE: when training the EBM model
+            features = self.molecules[mol_id].atom_types.argmax(dim=1).unsqueeze(0) # (1, num_nodes)
+            samples = self.cache[index]
+            samples = samples - samples.mean(dim=1, keepdim=True) # (1, num_nodes, 3)
+            return features, samples
+    
+    def _ebm_collate_fn(self, batch: List[Tuple[torch.Tensor, torch.Tensor]]) -> Dict[str, torch.Tensor]:
+        # unpack batch
+        # NOTE: we expect features to have shape (1, num_nodes, num_features) and samples to have shape (1, num_nodes, 3)
+        features, samples = zip(*batch)
+        # pad features and samples
+        padded_samples = []
+        padded_features = []
+        pad_value = ATOM_TYPES_ENCODING["PADDING_INDEX"]
+        max_num_nodes = max(f.size(0) for f in features)
+        for f, s in zip(features, samples):
+            if self.pdb_id not in DEBUG_MOLECULES:
+                # NOTE: when NOT in debug mode, we use the padding index as the number of atom types + 1!
+                padded_samples.append(torch.nn.functional.pad(s, (0, 0, 0, max_num_nodes - s.size(0)), value=0))
+                padded_features.append(torch.nn.functional.pad(f, (0, max_num_nodes - f.size(0)), value=pad_value))
+            else:
+                padded_samples.append(s)
+                padded_features.append(f)
+        padded_samples = torch.cat(padded_samples, dim=0)
+        padded_features = torch.cat(padded_features, dim=0).long()
+        padding_mask = (padded_features == pad_value).bool()
+        return {"features": padded_features, "samples": padded_samples, "padding_mask": padding_mask}
+    
+    def get_train_dataloader(self, batch_size: int, num_workers: int = 0, pin_memory: bool = False) -> Union[DataLoader, GraphDataLoader]:
+        if self.training_sampler:
+            return dgl.dataloading.GraphDataLoader(
+                self,
+                batch_size=batch_size,
+                shuffle=True,
+                drop_last=True,
+                num_workers=num_workers,
+                pin_memory=pin_memory,
+            )
+        else:
+            return torch.utils.data.DataLoader(
+                self,
+                batch_size=batch_size,
+                shuffle=True,
+                drop_last=True,
+                num_workers=num_workers,
+                pin_memory=pin_memory,
+                collate_fn=self._ebm_collate_fn,
+            )

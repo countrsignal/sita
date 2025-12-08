@@ -114,7 +114,7 @@ class PreTrainerFlow(LightningModule):
         batch = batch.to(self.device)
 
         # training step
-        loss_dict = self.flow.training_step(batch, plan=self.interpolant.plan)
+        loss_dict = self.flow.training_step(batch)
 
         # log loss
         for key, value in loss_dict.items():

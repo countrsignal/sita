@@ -1,0 +1,3 @@
+_target_: aita.data.datasets.GenerativeDatasetSingleMolecule
+data_path: ${paths.data_dir}
+pdb_id: null

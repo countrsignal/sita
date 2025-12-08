@@ -1,4 +1,5 @@
 import gc
+import numpy as np
 from tqdm import trange
 
 import hydra
@@ -13,8 +14,9 @@ from lightning import LightningModule
 
 from typing import Optional, Dict
 
-from ..utils.logging import RankedLogger
+from ..data.molecule import Molecule
 from ..pipeline.pipeline import Pipeline
+from ..utils.logging import RankedLogger
 
 
 log = RankedLogger(__name__, on_rank_zero=True)
@@ -100,10 +102,18 @@ class PreTrainerEBM(LightningModule):
         #################################################################################
         # Generate training data from the flow model
         #################################################################################
-        # Building dataset object
+        # Initialize flow model
         log.log(20, "Loading pre-trained flow model...")
         flow_model = hydra.utils.instantiate(self.hparams.flow)
-        flow_model.load_state_dict(torch.load(self.hparams.flow_model_ckpt, weights_only=True, map_location="cpu"))
+        flow_model = flow_model.load_from_checkpoint(self.hparams.flow_model_ckpt, weights_only=True, map_location="cpu")
+        
+        # compile model for faster inference
+        flow_model.edge_embedding = torch.compile(flow_model.edge_embedding)
+        for idx in range(flow_model.gvp_decoder.n_layers):
+            flow_model.gvp_decoder.edge_updater[idx] = torch.compile(flow_model.gvp_decoder.edge_updater[idx])
+        flow_model.gvp_decoder.position_updater = torch.compile(flow_model.gvp_decoder.position_updater)
+        
+        # move to device
         flow_model = flow_model.to(self.device)
         flow_model.eval()
 
@@ -112,23 +122,35 @@ class PreTrainerEBM(LightningModule):
         interpolant = hydra.utils.instantiate(self.hparams.interpolant)(plan=flow_plan)
 
         log.log(20, "Generating synthetic data from the flow model...")
-        for molecule, one_hots_tuple in self.dataset.molecule_features.items():
-            for _ in trange(self.hparams.sample_from_flow.n_batches, desc=f"Sampling conformers for {molecule}"):
-                # sample from the flow model
-                samples = interpolant.ode_integrate(
-                    batch_size=self.hparams.sample_from_flow.samples_per_batch,
-                    n_timesteps=self.hparams.sample_from_flow.n_timesteps,
-                    categorical_features=torch.cat(one_hots_tuple, dim=1),
-                    model=flow_model,
-                ).cpu()
-                # update the dataset with the new samples
-                self.dataset.update_dataset(
-                    mol_id=molecule,
-                    samples=samples.chunk(self.hparams.sample_from_flow.samples_per_batch, dim=0),
-                )
+        mol = self.dataset.molecules[self.dataset.pdb_id]
+        res_dict = Pipeline.generate_from_flow(
+            n_samples=self.hparams.sample_from_flow.n_samples,
+            samples_per_batch=self.hparams.sample_from_flow.samples_per_batch,
+            n_timesteps=self.hparams.sample_from_flow.n_timesteps,
+            molecules=[mol],
+            flow_model=flow_model,
+            interpolant=interpolant,
+            method=self.hparams.sample_from_flow.method,
+            tsr_params=self.hparams.sample_from_flow.tsr_params,
+        )
         log.log(20, "Data generation completed.")
+
+        # update dataset with the new samples
+        self.dataset.update_dataset(
+            mol_id=mol.name,
+            samples=res_dict[mol.name]["samples"].chunk(self.hparams.sample_from_flow.n_samples, dim=0),
+        )
+
+        # save generated samples in numpy file
+        np.save(
+            self.hparams.sample_from_flow.output_path,
+            res_dict[mol.name]["samples"].numpy(),
+            allow_pickle=True,
+        )
+
         # clear memory
-        del(samples, one_hots_tuple, molecule, interpolant, flow_model, flow_plan)
+        del(mol, res_dict, interpolant, flow_model, flow_plan)
+        torch.cuda.empty_cache()
         gc.collect()
 
     def on_before_batch_transfer(self, batch: Dict[str, Tensor], dataloader_idx: int) -> Dict[str, Tensor]:

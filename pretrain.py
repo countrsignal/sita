@@ -7,7 +7,7 @@ os.environ["HYDRA_FULL_ERROR"] = "1"
 
 import hydra
 import rootutils
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 import torch
 import lightning as L
@@ -33,6 +33,9 @@ from aita.utils.training import (
 
 log = RankedLogger(__name__, on_rank_zero=True)
 
+# register lightweight OmegaConf resolvers
+OmegaConf.register_new_resolver("div", lambda a, b: float(a) / float(b))
+OmegaConf.register_new_resolver("sub", lambda a, b: float(a) - float(b))
 
 ###################################
 # functions

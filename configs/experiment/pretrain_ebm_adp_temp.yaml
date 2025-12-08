@@ -6,10 +6,10 @@
 # all parameters below will be merged with parameters from default configurations set above
 # this allows you to overwrite only specified parameters
 defaults:
-  - override /dataset: generated
+  - override /dataset: generated_single_mol
   - override /energy: adp
   - override /ebm: default
-  - override /flow: vector_field
+  - override /flow: vfv2
   - override /optimizer: adam
   - override /scheduler: reduce_on_plateau
 
@@ -25,7 +25,7 @@ logger:
     group: "ebm"
 
 dataset:
-  debug_molecule: "alanine_dipeptide"
+  pdb_id: "alanine_dipeptide"
 
 interpolant:
   _partial_: true
@@ -48,9 +48,15 @@ plans:
   ebm_plan:
     _target_: aita.plans.TrigPlanLite
 
-flow_model_ckpt: ${paths.root_dir}/experimental_results/pretrain_flow/runs/2025-10-19_14-19-22/ema_model.pth
+flow_model_ckpt: ${paths.root_dir}/experimental_results/pretrain_flow/runs/2025-11-17_12-59-00/ema_model.pth
 
 sample_from_flow:
-  n_batches: 20
-  samples_per_batch: 5000
+  output_path: ${paths.output_dir}/alanine_dipeptide_samples.npy
+  pdb_path: ${paths.data_dir}/debug/alanine_dipeptide.pdb
+  n_samples: 100_000
+  samples_per_batch: 5_000
   n_timesteps: 100
+  method: "dopri5"
+  tsr_params:
+    k: ${div:1200,648}
+    rho: ${sub:${.k},1.0}
