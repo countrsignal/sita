@@ -120,7 +120,7 @@ class Interpolant:
         dw = dw.view(x.shape)
 
         # Euler-Maruyama update
-        drift  = velocity + diffusion_ceoff * 1.0 * score
+        drift  = velocity + diffusion_ceoff * score
         mean_x = x + drift * dt
         return mean_x + torch.sqrt(diffusion_ceoff) * dw
 

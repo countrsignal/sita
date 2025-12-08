@@ -44,7 +44,6 @@ def _rbf(D, D_min=0., D_max=20., D_count=16):
     return RBF
 
 
-@torch.compile
 class GVP(nn.Module):
     def __init__(
         self,
@@ -483,3 +482,179 @@ class EdgeUpdate(nn.Module):
 
         edge_feats = self.edge_norm(edge_feats + self.edge_update_fn(torch.cat(mlp_inputs, dim=-1)))
         return edge_feats
+
+
+class EnergyGVPConv(nn.Module):
+    """Stripped down version of the GVPConv for energy head."""
+
+    def __init__(
+        self,
+        scalar_size: int = 128,
+        vector_size: int = 16,
+        n_cp_feats: int = 0,
+        scalar_activation=nn.SiLU,
+        vector_activation=nn.Sigmoid,
+        n_message_gvps: int = 1,
+        use_dst_feats: bool = False,
+        rbf_dmax: float = 20,
+        rbf_dim: int = 16,
+        edge_feat_size: int = 0,
+        message_norm: str = "sum",
+        dropout: float = 0.0,
+        vector_gating=True,
+    ):
+        
+        super().__init__()
+        assert edge_feat_size > 0, "Edge features must be provided."
+
+        self.scalar_size = scalar_size
+        self.vector_size = vector_size
+        self.n_cp_feats = n_cp_feats
+        self.scalar_activation = scalar_activation
+        self.vector_activation = vector_activation
+        self.n_message_gvps = n_message_gvps
+        self.edge_feat_size = edge_feat_size
+        self.use_dst_feats = use_dst_feats
+        self.rbf_dmax = rbf_dmax
+        self.rbf_dim = rbf_dim
+        self.dropout_rate = dropout
+        self.message_norm = message_norm
+
+        # create message passing function using OptimizedGVP
+        message_gvps = []
+        for i in range(n_message_gvps):
+
+            dim_vectors_in = vector_size
+            dim_feats_in = scalar_size
+
+            # on the first layer, there is an extra edge vector for the displacement vector between the two node positions
+            if i == 0:
+                dim_vectors_in += 1
+                dim_feats_in += rbf_dim + edge_feat_size
+                
+            # if this is the first layer and we are using destination node features to compute messages, add them to the input dimensions
+            if use_dst_feats and i == 0:
+                dim_vectors_in += vector_size
+                dim_feats_in += scalar_size
+
+            message_gvps.append(
+                GVP(dim_vectors_in=dim_vectors_in, 
+                    dim_vectors_out=vector_size,
+                    n_cp_feats=n_cp_feats, 
+                    dim_feats_in=dim_feats_in, 
+                    dim_feats_out=scalar_size, 
+                    feats_activation=scalar_activation(), 
+                    vectors_activation=vector_activation(), 
+                    vector_gating=vector_gating)
+            )
+        self.edge_message = nn.Sequential(*message_gvps)
+        self.dropout = GVPDropout(self.dropout_rate)
+        self.message_layer_norm = GVPLayerNorm(self.scalar_size)
+
+        if isinstance(self.message_norm, str):
+            if self.message_norm not in ['mean', 'sum']:
+                raise ValueError(f"message_norm must be either 'mean', 'sum', or a number, got {self.message_norm}")
+        else:
+            assert isinstance(self.message_norm, (float, int)), "message_norm must be either 'mean', 'sum', or a number"
+
+        if self.message_norm == 'mean':
+            self.agg_func = fn.mean
+        else:
+            self.agg_func = fn.sum
+
+    def forward(self, g: dgl.DGLGraph, 
+                scalar_feats: torch.Tensor,
+                vec_feats: torch.Tensor,
+                edge_feats: torch.Tensor = None,
+                x_diff: torch.Tensor = None,
+                d: torch.Tensor = None):
+        # vec_feat has shape (n_nodes, n_vectors, 3)
+
+        with g.local_scope():
+
+            g.ndata['h'] = scalar_feats
+            g.ndata['v'] = vec_feats
+            g.edata['x_diff'] = x_diff
+            g.edata['d'] = d
+
+            # edge feature
+            g.edata["a"] = edge_feats
+
+            # compute messages on every edge
+            g.apply_edges(self.message)
+
+            # aggregate messages from every edge
+            g.update_all(fn.copy_e("scalar_msg", "m"), self.agg_func("m", "scalar_msg"))
+            g.update_all(fn.copy_e("vec_msg", "m"), self.agg_func("m", "vec_msg"))
+
+            # get aggregated scalar and vector messages
+            scalar_msg = g.ndata["scalar_msg"]
+            vec_msg = g.ndata["vec_msg"]
+
+            # dropout scalar and vector messages
+            scalar_msg, vec_msg = self.dropout(scalar_msg, vec_msg)
+
+            # update scalar and vector features, apply layernorm
+            scalar_feat_new = g.ndata['h'] + scalar_msg
+            vec_feat_new = g.ndata['v'] + vec_msg
+            
+            scalar_feat_new, vec_feat_new = self.message_layer_norm(scalar_feat_new, vec_feat_new)
+
+        return scalar_feat_new, vec_feat_new
+
+    def message(self, edges):
+        """Compute messages on edges using optimized GVP layers."""
+
+        # concatenate x_diff and v on every edge to produce vector features
+        vec_feats = [edges.data["x_diff"].unsqueeze(1), edges.src["v"]]
+        if self.use_dst_feats:
+            vec_feats.append(edges.dst["v"])
+        vec_feats = torch.cat(vec_feats, dim=1)
+
+        # create scalar features
+        scalar_feats = [edges.src['h'], edges.data['d']]
+        if self.edge_feat_size > 0:
+            scalar_feats.append(edges.data['a'])
+
+        if self.use_dst_feats:
+            scalar_feats.append(edges.dst['h'])
+
+        scalar_feats = torch.cat(scalar_feats, dim=1)
+
+        scalar_message, vector_message = self.edge_message((scalar_feats, vec_feats))
+
+        return {"scalar_msg": scalar_message, "vec_msg": vector_message}
+
+
+class EnergyHead(nn.Module):
+
+    def __init__(
+        self,
+        n_scalars: int,
+        n_vec_channels: int,
+        n_gvps: int = 3,
+    ) -> None:
+        super().__init__()
+
+        if n_gvps < 1:
+            raise ValueError("n_gvps must be >= 1")
+
+        gvp_layers = []
+        for idx in range(n_gvps):
+            last_layer = idx == (n_gvps - 1)
+            gvp_layers.append(
+                GVP(
+                    dim_feats_in=n_scalars,
+                    dim_feats_out=1 if last_layer else n_scalars,
+                    dim_vectors_in=n_vec_channels,
+                    dim_vectors_out=1 if last_layer else n_vec_channels,
+                    vectors_activation=nn.Identity() if last_layer else nn.Sigmoid(),
+                    vector_gating=True,
+                )
+            )
+
+        self.gvps = nn.Sequential(*gvp_layers)
+    
+    def forward(self, scalars: torch.Tensor, vectors: torch.Tensor):
+        energies, _ = self.gvps((scalars, vectors))
+        return energies.squeeze(1)

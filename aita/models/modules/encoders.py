@@ -5,6 +5,7 @@ from ..layers.layernorm import AdaLN
 from ..layers.embeddings import FourierEmbedding, PositionalEncoding
 
 
+@torch.compile
 class AtomEncoder(nn.Module):
 
     def __init__(

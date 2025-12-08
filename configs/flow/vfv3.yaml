@@ -1,0 +1,15 @@
+_target_: aita.models.vector_field_v3.VFV3
+n_vec: 32
+n_features: null
+edge_feat_size: 9
+n_layers: 7
+n_hidden_nodes: 128
+n_hidden_edge: 64
+n_message_gvps: 3
+n_update_gvps: 3
+n_coord_gvps: 3
+rbf_dim: 16
+rbf_dmax: 20
+message_norm: "sum"
+use_dst_feats: False
+vector_gating: True
