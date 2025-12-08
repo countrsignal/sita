@@ -383,3 +383,48 @@ class GenerativeDatasetSingleMolecule(Dataset):
                 pin_memory=pin_memory,
                 collate_fn=self._ebm_collate_fn,
             )
+
+    def get_eval_dataloader(self, batch_size: int, num_workers: int = 0, pin_memory: bool = False) -> Union[DataLoader, GraphDataLoader]:
+        if self.training_sampler:
+            return dgl.dataloading.GraphDataLoader(
+                self,
+                batch_size=batch_size,
+                shuffle=False,
+                drop_last=False,
+                num_workers=num_workers,
+                pin_memory=pin_memory,
+            )
+        else:
+            return torch.utils.data.DataLoader(
+                self,
+                batch_size=batch_size,
+                shuffle=False,
+                drop_last=False,
+                num_workers=num_workers,
+                pin_memory=pin_memory,
+                collate_fn=self._ebm_collate_fn,
+            )
+
+    @staticmethod
+    def load_generated_data(numpy_path: str, data_path: str, pdb_id: str, training_sampler: bool = False) -> "GenerativeDatasetSingleMolecule":
+        """
+        Load generated data from a numpy file.
+
+        Args:
+            numpy_path: path to the numpy file
+            data_path: path to the data directory
+            pdb_id: pdb id of the molecule
+            training_sampler: whether to use the training sampler
+        """
+        # load dataset
+        dataset = GenerativeDatasetSingleMolecule(data_path=data_path, pdb_id=pdb_id)
+        samples_np = np.load(numpy_path, allow_pickle=True)
+        samples_th = torch.from_numpy(samples_np).float()
+        # update dataset
+        dataset.cache.extend(samples_th.chunk(len(samples_th), dim=0))
+        dataset.backmap.update({idx: pdb_id for idx in list(range(len(samples_th)))})
+        dataset.training_sampler = training_sampler
+        # clear memory
+        del(samples_np, samples_th)
+        gc.collect()
+        return dataset
