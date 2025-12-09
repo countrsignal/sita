@@ -45,7 +45,7 @@ echo "WANDB_ENTITY='${USERNAME}'" > .env
 ## Launch Training Script ##
 ############################
 echo "Launching training script..."
-python "$PRETRAIN_SCRIPT" experiment=pretrain_ebm_adp_temp trainer.max_epochs=250
+python "$PRETRAIN_SCRIPT" experiment=pretrain_ebm_adp_temp trainer.max_epochs=500
 
 echo "Training COMPLETE."
 exit 0

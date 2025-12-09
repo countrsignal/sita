@@ -4,7 +4,6 @@ import dgl
 import torch
 import torch.nn as nn
 
-from ..plans import TrigPlan
 from .modules.energy_net import EnergyNet
 from .modules.encoders import AtomEncoder
 from .modules.decoder_opt import OptimizedGVPDecoder
@@ -110,7 +109,7 @@ class VFV3(nn.Module):
 
         return velocity
 
-    def training_step(self, graph: dgl.DGLGraph, plan: TrigPlan) -> dict[str, torch.Tensor]:
+    def training_step(self, graph: dgl.DGLGraph) -> dict[str, torch.Tensor]:
 
         # flow training step ================================================================
         # initialize the coordinates and velocities
@@ -151,22 +150,21 @@ class VFV3(nn.Module):
 
         # EBM training step ==================================================================
         # detach from flow computation graph
-        x_t = graph.ndata["xt"].detach()
+        z = graph.ndata["z"].detach()
+        x_t = graph.ndata["xt"].detach() 
         time = graph.ndata["t"].detach().view(-1)
         hs = hs.detach()
         vs = vs.detach()
         edge_feats = edge_repr.detach()
-        velocity = velocity.detach()
 
         loss_dict = self.ebm.training_step(
+            z=z,
             x_t=x_t,
             time=time,
             node_scalars=hs,
             node_vectors=vs,
             edge_feats=edge_feats,
             graph=graph,
-            velocity=velocity,
-            plan=plan,
         )
         # ====================================================================================
 

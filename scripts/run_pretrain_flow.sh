@@ -2,7 +2,7 @@
 #SBATCH --job-name=AITA_pretrain_adp_eflow
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:1
-#SBATCH --ntasks-per-node=6
+#SBATCH --ntasks-per-node=2
 #SBATCH --exclude=g017,g018
 #SBATCH --time=12-0:00:00
 #SBATCH --partition=koes_gpu

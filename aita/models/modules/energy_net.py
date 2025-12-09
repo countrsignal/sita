@@ -160,24 +160,19 @@ class EnergyNet(nn.Module):
     
     def training_step(
         self,
+        z: Tensor,
         x_t: Tensor,
         time: Tensor,
         node_scalars: Tensor,
         node_vectors: Tensor,
         edge_feats: Tensor,
         graph: dgl.DGLGraph,
-        velocity: Tensor,
-        plan: TrigPlan,
     ) -> Dict[str, Tensor]:
         # x_t: (num_nodes, 3)
         # time: (num_nodes,)
         # node_scalars: (num_nodes, n_hidden)
         # node_vectors: (num_nodes, n_vec_channels, 3)
         # edge_feats: (num_edges, n_hidden)
-
-        # compute the target score
-        score_from_velocity = target_score_from_velocity_model(plan, velocity, x_t, time)
-        # score_from_velocity: (num_nodes, 3)
 
         # get the indices of the edges
         src_idx, dst_idx = graph.edges()
@@ -221,8 +216,9 @@ class EnergyNet(nn.Module):
             # pred_score: (num_nodes, 3)
 
         # compute score matching loss
+        sigma_t = graph.ndata["sigma_t"]
         with graph.local_scope():
-            graph.ndata["sm_loss_per_node"] = torch.square(pred_score - score_from_velocity).mean(dim=-1)
+            graph.ndata["sm_loss_per_node"] = torch.square(sigma_t * pred_score - z).mean(dim=-1)
             sm_loss = dgl.mean_nodes(graph, "sm_loss_per_node").mean()
         # ====================================================================================
 
