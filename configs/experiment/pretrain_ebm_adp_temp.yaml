@@ -50,6 +50,8 @@ plans:
 
 flow_model_ckpt: ${paths.root_dir}/experimental_results/pretrain_flow/runs/2025-11-17_12-59-00/ema_model.pth
 
+ebm_inspection_interval: 100
+
 sample_from_flow:
   output_path: ${paths.output_dir}/alanine_dipeptide_samples.npy
   pdb_path: ${paths.data_dir}/debug/alanine_dipeptide.pdb
@@ -57,6 +59,6 @@ sample_from_flow:
   samples_per_batch: 5_000
   n_timesteps: 100
   method: "dopri5"
-  tsr_params:
-    k: ${div:1200,648}
-    rho: ${sub:${.k},1.0}
+  tsr_params: null
+    # k: ${div:1200,648}
+    # rho: ${sub:${.k},1.0}

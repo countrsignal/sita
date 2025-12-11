@@ -17,6 +17,8 @@ from typing import Optional, Dict
 from ..data.molecule import Molecule
 from ..pipeline.pipeline import Pipeline
 from ..utils.logging import RankedLogger
+from ..utils.plotting import plot_ebm_histogram
+from .common import fetch_wandb_logger, eval_ebm_single_molecule
 
 
 log = RankedLogger(__name__, on_rank_zero=True)
@@ -74,6 +76,16 @@ class PreTrainerEBM(LightningModule):
         else:
             self.ema = None
             log.log(20, "Training without EMA.")
+        
+        # setup evaluation dataloader
+        self.eval_dl = self.dataset.get_eval_dataloader(
+            self.hparams.loader.batch_size,
+            num_workers=0,
+            pin_memory=False,
+        )
+        
+        # variable trackers
+        self._epoch = 0
     
     def train_dataloader(self):
         return self.dataset.get_train_dataloader(self.hparams.loader.batch_size, self.hparams.loader.num_workers, self.hparams.loader.pin_memory)
@@ -221,6 +233,23 @@ class PreTrainerEBM(LightningModule):
         self.log("pretrain/ebm/nce_loss", loss_nce, prog_bar=True, logger=True)
         self.log("pretrain/ebm/loss", loss, prog_bar=True, logger=True)
         return loss
+    
+    def on_train_epoch_end(self) -> None:
+        super().on_train_epoch_end()
+
+        self._epoch += 1
+        if self._epoch % self.hparams.ebm_inspection_interval == 0:
+            wandb_logger = fetch_wandb_logger(self.loggers)
+            if wandb_logger is not None:
+                log_probs = eval_ebm_single_molecule(self.ebm, self.eval_dl, self.device)
+                plot_ebm_histogram(
+                    log_probs,
+                    prefix="media/",
+                    wandb_logger=wandb_logger,
+                )
+            else:
+                log.log(20, "No wandb logger found. Skipping EBM inspection.")
+
 
     def optimizer_step(self, *args, **kwargs):
         super().optimizer_step(*args, **kwargs)

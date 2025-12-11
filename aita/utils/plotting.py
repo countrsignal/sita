@@ -38,6 +38,56 @@ def fig_to_image(fig):
 
 
 @clean_up_plots
+def plot_ebm_histogram(
+    tensor: torch.Tensor,
+    bins: int = 50,
+    color: str = '#4C72B0',
+    alpha: float = 0.75,
+    title: str = 'Histogram',
+    xlabel: str = 'Value',
+    ylabel: str = 'Frequency',
+    figsize=(7, 5),
+    grid: bool = True,
+    prefix: str = '',
+    wandb_logger: Optional[WandbLogger] = None,
+) -> None:
+    """
+    Plot a histogram from a 1D PyTorch tensor.
+
+    Args:
+        tensor (torch.Tensor): Input tensor of shape (N,).
+        bins (int): Number of histogram bins.
+        color (str): Color of the histogram bars.
+        alpha (float): Transparency of the bars.
+        title (str): Plot title.
+        xlabel (str): X-axis label.
+        ylabel (str): Y-axis label.
+        figsize (tuple): Figure size in inches.
+        grid (bool): Whether to show grid lines.
+    """
+    if tensor.ndim != 1:
+        raise ValueError("Input tensor must be 1D.")
+    
+    data = tensor.numpy()
+
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.hist(data, bins=bins, color=color, alpha=alpha, edgecolor='black', linewidth=0.5)
+    ax.set_title(title, fontsize=13, fontweight='bold')
+    ax.set_xlabel(xlabel, fontsize=11)
+    ax.set_ylabel(ylabel, fontsize=11)
+    if grid:
+        ax.grid(True, linestyle='--', alpha=0.5)
+
+    fig.tight_layout()
+    if wandb_logger is not None:
+        ebm_histogram_fig = fig_to_image(fig)
+        wandb_logger.log_image(f"{prefix}/Log Probability Histogram", [ebm_histogram_fig])
+        plt.close()
+    else:
+        plt.show()
+
+
+@clean_up_plots
 def plot_energy_histograms(
     ode: torch.Tensor,
     sim: torch.Tensor,

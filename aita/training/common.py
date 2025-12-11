@@ -1,5 +1,9 @@
-from lightning.pytorch.loggers import WandbLogger
+import gc
+from tqdm import tqdm
+from typing import List
 
+import torch
+from lightning.pytorch.loggers import WandbLogger
 
 
 def fetch_wandb_logger(loggers) -> WandbLogger:
@@ -10,3 +14,51 @@ def fetch_wandb_logger(loggers) -> WandbLogger:
             break
 
     return wandb_logger
+
+
+def eval_ebm_single_molecule(
+    ebm: torch.nn.Module,
+    loader: torch.utils.data.DataLoader,
+    device: torch.device,
+):
+    assert len(loader.dataset.molecules) == 1, "Only one molecule evaluation is supported."
+
+    # set model to evaluation mode
+    ebm.eval();
+    
+    # evaluation loop
+    log_probs: List[torch.Tensor] = []
+    with torch.no_grad():
+        for batch in tqdm(loader, desc="Evaluating EBM"):
+            # transfer batch to device
+            batch = {k: v.to(device) for k, v in batch.items()}
+
+            # unpack batch
+            features = batch["features"]
+            samples  = batch["samples"]
+            padding_mask = batch["padding_mask"]
+            times = torch.ones((samples.size(0), samples.size(1), 1), device=samples.device)
+
+            # evaluate EBM
+            values = ebm(
+                time=times,
+                features=features,
+                coordinates=samples,
+                padding_mask=padding_mask,
+                return_logprob=True,
+                require_grad=False,
+            )
+            log_probs.append(
+                values.cpu().flatten()
+            )
+    
+    # clean up memory
+    del(batch, features, samples, padding_mask, times, values)
+    torch.cuda.empty_cache()
+    gc.collect()
+
+    # return model to training mode
+    ebm.train();
+
+    # return log probabilities
+    return torch.cat(log_probs, dim=-1)
