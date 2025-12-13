@@ -5,8 +5,8 @@ import torch
 import torch.nn as nn
 
 from .modules.encoders import AtomEncoder
-from .modules.decoders import GVP_Decoder
-# from .modules.decoder_opt import OptimizedGVPDecoder
+# from .modules.decoders import GVP_Decoder
+from .modules.decoder_opt import OptimizedGVPDecoder
 
 
 def _build_opt_edge_mlp(edge_feat_size: int, n_hidden_edge: int) -> nn.Module:
@@ -53,7 +53,7 @@ class VFV2(nn.Module):
 
         self.edge_embedding = _build_opt_edge_mlp(edge_feat_size, n_hidden_edge)
 
-        self.gvp_decoder = GVP_Decoder(
+        self.gvp_decoder = OptimizedGVPDecoder(
             n_vec=n_vec,
             n_layers=n_layers,
             n_hidden_nodes=n_hidden_nodes,
@@ -98,7 +98,7 @@ class VFV2(nn.Module):
         # edge_repr: (num_edges, n_hidden_edge)
 
         # decode the vector field
-        velocity = self.gvp_decoder(node_repr, v_init, x_init, edge_repr, edge_mask, graph)
+        velocity, *_ = self.gvp_decoder(node_repr, v_init, x_init, edge_repr, edge_mask, graph)
         # velocity: (num_nodes, 3)
 
         return velocity
