@@ -6,7 +6,19 @@ import torch.nn as nn
 
 from .modules.encoders import AtomEncoder
 from .modules.decoders import GVP_Decoder
- 
+# from .modules.decoder_opt import OptimizedGVPDecoder
+
+
+def _build_opt_edge_mlp(edge_feat_size: int, n_hidden_edge: int) -> nn.Module:
+    mlp = nn.Sequential(
+            nn.Linear(edge_feat_size, n_hidden_edge),
+            nn.SiLU(),
+            nn.Linear(n_hidden_edge, n_hidden_edge),
+            nn.SiLU(),
+            nn.LayerNorm(n_hidden_edge),
+        )
+    return torch.compile(mlp)
+
 
 ###################################
 # Classes
@@ -39,13 +51,7 @@ class VFV2(nn.Module):
             n_hidden=n_hidden_nodes,
         )
 
-        self.edge_embedding = nn.Sequential(
-            nn.Linear(edge_feat_size, n_hidden_edge),
-            nn.SiLU(),
-            nn.Linear(n_hidden_edge, n_hidden_edge),
-            nn.SiLU(),
-            nn.LayerNorm(n_hidden_edge),
-        )
+        self.edge_embedding = _build_opt_edge_mlp(edge_feat_size, n_hidden_edge)
 
         self.gvp_decoder = GVP_Decoder(
             n_vec=n_vec,
@@ -103,8 +109,8 @@ class VFV2(nn.Module):
         # vector_field: (num_nodes, 3)
 
         # compute vector field loss
-        graph.ndata["loss_per_node"] = torch.square(velocity - graph.ndata["vt"]).mean(dim=-1)
-        loss_per_molecule = dgl.mean_nodes(graph, "loss_per_node")
-        loss = loss_per_molecule.mean()
+        with graph.local_scope():
+            graph.ndata["vf_loss_per_node"] = torch.square(velocity - graph.ndata["vt"]).mean(dim=-1)
+            loss = dgl.mean_nodes(graph, "vf_loss_per_node").mean()
 
         return {"loss": loss}

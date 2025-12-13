@@ -1,7 +1,8 @@
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict
 
 import torch
 from torch import nn
+from einops import repeat
 
 
 class EBM(nn.Module):
@@ -60,3 +61,62 @@ class EBM(nn.Module):
             )[0]
             # position_grad: (num_nodes, 3)
             return position_grad, energy
+
+
+    def training_step(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+
+        # unpack batch
+        t = batch["t"]
+        z = batch["z"]
+        x_t = batch["xt"]
+        sigma_t = batch["sigma_t"]
+        features = batch["features"]
+        padding_mask = batch["padding_mask"]
+
+        # predict energy
+        grads, energies = self(
+            time=t,
+            features=features,
+            coordinates=x_t,
+            padding_mask=padding_mask,
+            return_logprob=False,
+            require_grad=True,
+        )
+
+        # score matching loss
+        squared_errors = torch.square(sigma_t * grads + z).mean(dim=-1) # (B, L)
+        # account for padding while computing mean
+        score_loss = (
+            squared_errors * ~padding_mask
+        ).sum(dim=1) / (~padding_mask).sum(dim=1) # (B,)
+        score_loss = score_loss.mean()
+
+        # nce loss
+        batch_size, n_atoms = t.size(0), t.size(1)
+        perturb = torch.randn(batch_size, device=t.device) * 0.025
+        negative_t = t + repeat(perturb, "b -> b n 1", n=n_atoms)
+        negative_t = torch.clamp(negative_t, 0, 1)
+        negative_energies = self(
+            time=negative_t,
+            features=features,
+            coordinates=x_t,
+            padding_mask=padding_mask,
+            return_logprob=True,
+            require_grad=False, # NOTE: no gradient tracking for the NCE loss
+        )
+        loss_nce = -torch.mean(
+            energies - torch.logsumexp(
+                torch.cat([energies, negative_energies], dim=-1),
+                dim=-1,
+                keepdim=True,
+            )
+        )
+
+        # total loss
+        loss = score_loss + loss_nce
+
+        return {
+            "loss": loss,
+            "score_loss": score_loss,
+            "loss_nce": loss_nce,
+        }

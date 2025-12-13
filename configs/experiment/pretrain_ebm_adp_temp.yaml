@@ -59,6 +59,6 @@ sample_from_flow:
   samples_per_batch: 5_000
   n_timesteps: 100
   method: "dopri5"
-  tsr_params: null
-    # k: ${div:1200,648}
-    # rho: ${sub:${.k},1.0}
+  tsr_params:
+    k: ${div:1200,648}
+    rho: 1.0

@@ -1,9 +1,12 @@
 import gc
 from tqdm import tqdm
-from typing import List
+from typing import List, Optional
 
 import torch
 from lightning.pytorch.loggers import WandbLogger
+
+from ..utils.data_utils import angstrom_to_nm
+from ..energies.base_molecule_energy_function import BaseMoleculeEnergy
 
 
 def fetch_wandb_logger(loggers) -> WandbLogger:
@@ -20,6 +23,7 @@ def eval_ebm_single_molecule(
     ebm: torch.nn.Module,
     loader: torch.utils.data.DataLoader,
     device: torch.device,
+    forcefield: Optional[BaseMoleculeEnergy] = None,
 ):
     assert len(loader.dataset.molecules) == 1, "Only one molecule evaluation is supported."
 
@@ -28,6 +32,10 @@ def eval_ebm_single_molecule(
     
     # evaluation loop
     log_probs: List[torch.Tensor] = []
+
+    if forcefield is not None:
+        energies: List[torch.Tensor] = []
+
     with torch.no_grad():
         for batch in tqdm(loader, desc="Evaluating EBM"):
             # transfer batch to device
@@ -48,11 +56,19 @@ def eval_ebm_single_molecule(
                 return_logprob=True,
                 require_grad=False,
             )
+
+            if forcefield is not None:
+                dof = samples.size(1) * 3
+                ff_energies = forcefield(angstrom_to_nm(samples.reshape(-1, dof)), return_force=False)
+                energies.append(ff_energies.cpu().flatten())
+
             log_probs.append(
                 values.cpu().flatten()
             )
     
     # clean up memory
+    if forcefield is not None:
+        del(ff_energies)
     del(batch, features, samples, padding_mask, times, values)
     torch.cuda.empty_cache()
     gc.collect()
@@ -61,4 +77,7 @@ def eval_ebm_single_molecule(
     ebm.train();
 
     # return log probabilities
-    return torch.cat(log_probs, dim=-1)
+    if forcefield is not None:
+        return torch.cat(log_probs, dim=-1), torch.cat(energies, dim=-1)
+    else:
+        return torch.cat(log_probs, dim=-1)

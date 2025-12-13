@@ -1,6 +1,7 @@
 from token import OP
 import PIL
 import seaborn as sns
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 
@@ -43,7 +44,6 @@ def plot_ebm_histogram(
     bins: int = 50,
     color: str = '#4C72B0',
     alpha: float = 0.75,
-    title: str = 'Histogram',
     xlabel: str = 'Value',
     ylabel: str = 'Frequency',
     figsize=(7, 5),
@@ -72,7 +72,6 @@ def plot_ebm_histogram(
 
     fig, ax = plt.subplots(figsize=figsize)
     ax.hist(data, bins=bins, color=color, alpha=alpha, edgecolor='black', linewidth=0.5)
-    ax.set_title(title, fontsize=13, fontweight='bold')
     ax.set_xlabel(xlabel, fontsize=11)
     ax.set_ylabel(ylabel, fontsize=11)
     if grid:
@@ -89,12 +88,13 @@ def plot_ebm_histogram(
 
 @clean_up_plots
 def plot_energy_histograms(
-    ode: torch.Tensor,
-    sim: torch.Tensor,
+    ode: np.ndarray,
+    sim: np.ndarray,
     *,
-    weights: Optional[torch.Tensor] = None,
+    weights: Optional[np.ndarray] = None,
     bins: int = 50,
     color_ode="#4575b4",
+    color_weighted="#02818a",
     label_sim: str = "MD data",
     label_ode: str = "ODE",
     alpha_ode: float = 0.45,
@@ -133,12 +133,8 @@ def plot_energy_histograms(
     wandb_logger: Optional[WandbLogger] = None,
         Wandb logger object.
     """
-    # Convert to numpy
-    ode = ode.detach().cpu().numpy().ravel()
-
     # Setup style
-    sns.set_style("whitegrid")
-    plt.rcParams.update({
+    rc = {
         "font.family": "serif",
         "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
         "axes.labelsize": 14,
@@ -147,64 +143,62 @@ def plot_energy_histograms(
         "xtick.labelsize": 12,
         "ytick.labelsize": 12,
         "axes.linewidth": 1.0,
-    })
+    }
+    with mpl.rc_context(rc=rc), sns.axes_style("whitegrid"):
+        fig, ax = plt.subplots(figsize=figsize)
 
-    fig, ax = plt.subplots(figsize=figsize)
-
-    # Plot histograms
-    ax.hist(
-        sim,
-        bins=bins,
-        color="#99d8c9",
-        alpha=alpha_sim,
-        density=True,
-        label=label_sim,
-        edgecolor='none',
-    )
-    ax.hist(
-        ode,
-        bins=bins,
-        color=color_ode,
-        alpha=alpha_ode,
-        density=True,
-        label=label_ode,
-        edgecolor='none',
-    )
-
-    if weights is not None:
+        # Plot histograms
+        ax.hist(
+            sim,
+            bins=bins,
+            color="#99d8c9",
+            alpha=alpha_sim,
+            density=True,
+            label=label_sim,
+            edgecolor='none',
+        )
         ax.hist(
             ode,
             bins=bins,
-            color="r",
-            alpha=1.0,
+            color=color_ode,
+            alpha=alpha_ode,
             density=True,
-            label="Weighted Samples",
-            histtype='step',
-            linewidth=4,
-            weights=weights,
+            label=label_ode,
+            edgecolor='none',
         )
 
-    # Optional KDE overlay
-    if kde:
-        sns.kdeplot(ode, color=color_ode, ax=ax, lw=2.0, label=f"{label_ode} KDE")
+        if weights is not None:
+            ax.hist(
+                ode,
+                bins=bins,
+                color=color_weighted,
+                alpha=1.0,
+                density=True,
+                label="Weighted Samples",
+                histtype='step',
+                linewidth=8,
+                weights=weights,
+            )
 
-    # Style axes
-    ax.set_xlabel(xlabel or "Value", labelpad=10)
-    ax.set_ylabel(ylabel, labelpad=10)
-    if title:
-        ax.set_title(title, pad=12)
+        # Optional KDE overlay
+        if kde:
+            sns.kdeplot(ode, color=color_ode, ax=ax, lw=2.0, label=f"{label_ode} KDE")
 
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-    ax.legend(frameon=False)
+        # Style axes
+        ax.set_xlabel(xlabel or "Value", labelpad=10, fontsize=45)
+        ax.set_ylabel(ylabel, labelpad=10, fontsize=45)
 
-    plt.tight_layout()
-    if wandb_logger is not None:
-        energy_histograms_fig = fig_to_image(fig)
-        wandb_logger.log_image(f"{prefix}/Energy Histograms", [energy_histograms_fig])
-        plt.close()
-    else:
-        plt.show()
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.legend(frameon=False, fontsize=25)
+
+        plt.tight_layout()
+        if wandb_logger is not None:
+            energy_histograms_fig = fig_to_image(fig)
+            wandb_logger.log_image(f"{prefix}/Energy Histograms", [energy_histograms_fig])
+            plt.close()
+        else:
+            plt.show()
 
 
 @clean_up_plots
@@ -265,7 +259,6 @@ def adp_ramachandran_plot(
 @clean_up_plots
 def adp_free_energy_profile(
     samples: np.ndarray,
-    energies: np.ndarray,
     log_w: np.ndarray,
     pdb_path: str,
     gt_fes_path: str,
@@ -323,8 +316,8 @@ def adp_free_energy_profile(
 
     # Free energy profile #########################################################
     fig, ax = plt.subplots(figsize=figsize)
-    ax.plot(gt_fes, f_i_mean, linewidth=5)
-    ax.fill_between(gt_fes, f_i_mean - f_i_std, f_i_mean + f_i_std, alpha=0.2)
+    ax.plot(gt_fes["xs"], f_i_mean, linewidth=5)
+    ax.fill_between(gt_fes["xs"], f_i_mean - f_i_std, f_i_mean + f_i_std, alpha=0.2)
     ax.plot(np.hstack([grid_left, grid_right]), np.hstack([fes_left, fes_right]), linewidth=5, linestyle="--")
     ax.set_xlabel(r"$\varphi$", fontsize=45)
     ax.set_ylabel(r"Free energy / $k_B T$", fontsize=45)

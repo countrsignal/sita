@@ -106,7 +106,6 @@ class PreTrainerFlow(LightningModule):
         # apply data pipeline
         if self.pipeline is not None:
             batch = self.pipeline.run_flow(batch, is_training=True)
-
         return batch
 
     def training_step(self, batch: dgl.DGLGraph, batch_idx: int) -> Tensor:

@@ -77,12 +77,8 @@ class PreTrainerEBM(LightningModule):
             self.ema = None
             log.log(20, "Training without EMA.")
         
-        # setup evaluation dataloader
-        self.eval_dl = self.dataset.get_eval_dataloader(
-            self.hparams.loader.batch_size,
-            num_workers=0,
-            pin_memory=False,
-        )
+        # setup evaluation dataloader as null (gets initialized in on_fit_start)
+        self.eval_dl = None
         
         # variable trackers
         self._epoch = 0
@@ -158,6 +154,13 @@ class PreTrainerEBM(LightningModule):
             self.hparams.sample_from_flow.output_path,
             res_dict[mol.name]["samples"].numpy(),
             allow_pickle=True,
+        )
+
+        # setup evaluation dataloader
+        self.eval_dl = self.dataset.get_eval_dataloader(
+            self.hparams.loader.batch_size,
+            num_workers=0,
+            pin_memory=False,
         )
 
         # clear memory

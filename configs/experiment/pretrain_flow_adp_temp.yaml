@@ -9,13 +9,13 @@ defaults:
   - override /dataset: simulated
   - override /optimizer: adam
   - override /scheduler: reduce_on_plateau
-  - override /flow: vfv3
+  - override /flow: vfv2
 
 seed: 12345
 
 task_name: "pretrain_flow"
 
-tags: ["Pretrain", "Flow", "ADP", "Temperature", "ResidueIdx", "TimeEmbedding", "PositionalEncoding", "GeometryDistortion"]
+tags: ["Pretrain", "Flow", "ADP", "Temperature"]
 
 logger:
   wandb:

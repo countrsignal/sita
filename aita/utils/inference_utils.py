@@ -41,12 +41,12 @@ def quantile_clip(log_w: torch.Tensor, quantile: float = 0.999) -> torch.Tensor:
     return torch.where(log_w < cutoff)[0]
 
 
-def quantile_filter(samples: torch.Tensor, log_w: torch.Tensor, quantile: float = 0.999) -> Tuple[torch.Tensor, torch.Tensor]:
+def quantile_filter(samples: torch.Tensor, energies: torch.Tensor, log_w: torch.Tensor, quantile: float = 0.999) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Filter samples and log weights beyond certain quantile.
     """
     idx = quantile_clip(log_w, quantile)
-    return samples[idx], log_w[idx]
+    return samples[idx], energies[idx], log_w[idx]
 
 
 def normalize_log_w(log_w: torch.Tensor) -> torch.Tensor:
@@ -58,7 +58,16 @@ def normalize_log_w(log_w: torch.Tensor) -> torch.Tensor:
 
 def calc_ess(log_w_normalized: torch.Tensor) -> float:
     """Effective Sample Size"""
-    return 1.0 / torch.sum(torch.exp(log_w_normalized)**2)
+    ess = 1.0 / torch.sum(torch.exp(log_w_normalized)**2)
+    ess /= log_w_normalized.shape[0]
+    return ess
+
+
+def importance_weighted_resample(samples: torch.Tensor, log_w_normalized: torch.Tensor) -> torch.Tensor:
+    """Importance Resampling using multinomial sampling"""
+    weights = torch.exp(log_w_normalized)
+    indices = torch.multinomial(weights, samples.shape[0], replacement=True)
+    return samples[indices], indices
 
 
 ################################################################################
