@@ -67,7 +67,7 @@ class VFV2(nn.Module):
             use_dst_feats=use_dst_feats,
             vector_gating=vector_gating,
         )
-    
+
     def load_from_checkpoint(self, checkpoint_path: str, **kwargs: Any) -> "VFV2":
         checkpoint = torch.load(checkpoint_path, **kwargs)
         self.load_state_dict(checkpoint)

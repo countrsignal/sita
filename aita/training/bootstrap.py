@@ -13,9 +13,10 @@ from torch import Tensor
 
 from lightning import LightningModule
 
-from ..models.vector_field_v2 import VFV2
 from ..utils.logging import RankedLogger
 from ..pipeline.pipeline import Pipeline
+from ..models.vector_field_v2 import VFV2
+from ..utils.data_utils import angstrom_to_nm
 from ..data.datasets import GenerativeDatasetSingleMolecule
 from .common import fetch_wandb_logger, eval_ebm_single_molecule
 from ..utils.plotting import plot_ebm_histogram, plot_energy_histograms, adp_ramachandran_plot, adp_free_energy_profile
@@ -37,14 +38,12 @@ BATCH = Union[BATCH_FLOW, BATCH_EBM]
 # functions
 ###################################
 
-def load_reference_md_data(dcd_path: str, pdb_path: str) -> md.Trajectory:
-
 
 ###################################
 # Classes
 ###################################
 
-class AnnealBootstrap(LightningModule):
+class AnnealerADP(LightningModule):
 
     def __init__(self, config: DictConfig) -> None:
         super().__init__()
@@ -107,6 +106,9 @@ class AnnealBootstrap(LightningModule):
         
         # setup evaluation dataloader as null (gets initialized in on_fit_start)
         self.eval_dl = None
+
+        # setup placeholder for reference MD data energies
+        self.ref_energies = None
         
         # variable trackers
         self._epoch: int = 0
@@ -198,14 +200,14 @@ class AnnealBootstrap(LightningModule):
             # generate data from the flow model
             mol = self.dataset.molecules[self.dataset.pdb_id]
             res_dict = Pipeline.generate_from_flow(
-                n_samples=self.hparams.sample_from_flow.n_samples,
-                samples_per_batch=self.hparams.sample_from_flow.samples_per_batch,
-                n_timesteps=self.hparams.sample_from_flow.n_timesteps,
+                n_samples=self.hparams.generate_ebm_dataset.n_samples,
+                samples_per_batch=self.hparams.generate_ebm_dataset.samples_per_batch,
+                n_timesteps=self.hparams.generate_ebm_dataset.n_timesteps,
                 molecules=[mol],
                 flow_model=self.flow,
                 interpolant=self.flow_interpolant,
-                method=self.hparams.sample_from_flow.method,
-                tsr_params=self.hparams.sample_from_flow.tsr_params,
+                method=self.hparams.generate_ebm_dataset.method,
+                tsr_params=self.hparams.generate_ebm_dataset.tsr_params,
             )
             log.log(20, "Data generation completed.")
 
@@ -213,16 +215,17 @@ class AnnealBootstrap(LightningModule):
             self.dataset.clear_cache()
             self.dataset.update_dataset(
                 mol_id=mol.name,
-                samples=res_dict[mol.name]["samples"].chunk(self.hparams.sample_from_flow.n_samples, dim=0),
+                samples=res_dict[mol.name]["samples"].chunk(self.hparams.generate_ebm_dataset.n_samples, dim=0),
             )
-            self.dataset.training_sampler = False
+            self.dataset.training_sampler = False # NOTE: MUST BE FALSE FOR EBM TRAINING
 
             # save generated samples in numpy file
-            np.save(
-                os.path.join(self.hparams.era_ckpt_dir, f"flow_samples_{temp}K.npy"),
-                res_dict[mol.name]["samples"].numpy(),
-                allow_pickle=True,
-            )
+            if self._temperature_index > 0:
+                np.save(
+                    os.path.join(self.hparams.era_ckpt_dir, f"flow_samples_{temp}K.npy"),
+                    res_dict[mol.name]["samples"].numpy(),
+                    allow_pickle=True,
+                )
 
             # setup evaluation dataloader
             self.eval_dl = self.dataset.get_eval_dataloader(
@@ -247,27 +250,30 @@ class AnnealBootstrap(LightningModule):
             self.ebm = self.ebm.to(self.device)
 
             if self._temperature_index == 0:
-                next_temp = self._temperature_ladder[self._temperature_index]
-                log.log(20, f"Annealing from 1200K -> {next_temp}K ...")
+                curr_temp = self._temperature_ladder[self._temperature_index]
+                log.log(20, f"Annealing from 1200K -> {curr_temp}K ...")
             else:
                 prev_temp = self._temperature_ladder[self._temperature_index - 1]
-                next_temp = self._temperature_ladder[self._temperature_index]
-                log.log(20, f"Annealing from {prev_temp}K -> {next_temp}K ...")
+                curr_temp = self._temperature_ladder[self._temperature_index]
+                log.log(20, f"Annealing from {prev_temp}K -> {curr_temp}K ...")
 
             # Instantiate full forcefield at current temperature
-            forcefield = self.forcefield_partial.instantiate(temperature=next_temp)
-            log.log(20, f"Forcefield Instantiated at {next_temp}K.")
+            forcefield = self.forcefield_partial.instantiate(temperature=curr_temp)
+            log.log(20, f"Forcefield Instantiated at {curr_temp}K.")
 
             # load reference MD data and compute energies
             log.log(20, "Loading reference MD data and computing energies...")
-            dof = self.dataset.molecules[self.dataset.pdb_id].n_atoms * 3
+            mol = self.dataset.molecules[self.dataset.pdb_id]
+            dof = mol.n_atoms * 3
             dcd_dir  = self.dataset.data_path / "mds" / "temperature"
-            mol_name = self.dataset.molecules[self.dataset.pdb_id].name
-            dcd_path = list(dcd_dir.glob(f"{mol_name}_{next_temp}K*.dcd"))[0]
+            dcd_path = list(dcd_dir.glob(f"{mol.name}_{curr_temp}K*.dcd"))[0]
             ref_traj = md.load(dcd_path, top=self.dataset.pdb_path)
             ref_coords = torch.from_numpy(ref_traj.xyz).reshape(-1, dof)
             ref_energies = forcefield(ref_coords, return_force=False)
             log.log(20, "Reference energies computed.")
+
+            # store reference MD data
+            self.ref_energies = ref_energies
 
             # Evaluate surrogate density model (EBM)
             log.log(20, "Evaluating surrogate density model (EBM)...")
@@ -282,7 +288,7 @@ class AnnealBootstrap(LightningModule):
 
             # Calculate log weights
             log.log(20, "Calculating log weights...")
-            log_w = calc_log_w(log_probs, energies)
+            log_w = calc_log_w(energies=energies, log_probs=log_probs)
             log.log(20, "Log weights computed.")
 
             # search for optimal quantile clipping threshold
@@ -298,7 +304,7 @@ class AnnealBootstrap(LightningModule):
             log.log(20, f"Optimal quantile clipping threshold: {optimal_quantile.item()} with ESS: {effective_sample_sizes.max().item():.4f}",)
 
             # clip log weights using optimal quantile
-            samples = torch.cat(self.dataset.cache, dim=-1)
+            samples = torch.cat(self.dataset.cache, dim=0)
             samples, energies, log_w = quantile_filter(samples, energies, log_w, optimal_quantile)
             normalized_log_w = normalize_log_w(log_w)
 
@@ -308,14 +314,14 @@ class AnnealBootstrap(LightningModule):
                 sim=ref_energies.numpy(),
                 weights=normalized_log_w.numpy(),
                 bins=100,
-                xlabel=r"$U(x) / k_{B}T$" + f" ({next_temp}K)",
+                xlabel=r"$U(x) / k_{B}T$" + f" ({curr_temp}K)",
                 figsize=(11, 9),
-                prefix="media/",
+                prefix="anneal_step/",
                 wandb_logger=wandb_logger,
             )
 
             # Importance weighted resampling
-            samples = importance_weighted_resample(samples, normalized_log_w)
+            samples, _ = importance_weighted_resample(samples, normalized_log_w)
 
             # Reset and update dataset with the new samples
             self.dataset.clear_cache()
@@ -323,7 +329,7 @@ class AnnealBootstrap(LightningModule):
                 mol_id=mol.name,
                 samples=samples.chunk(samples.size(0), dim=0),
             )
-            self.dataset.training_sampler = True
+            self.dataset.training_sampler = True # NOTE: MUST BE TRUE FOR FLOW TRAINING
 
             # move ebm back to cpu
             self.ebm = self.ebm.cpu()
@@ -347,9 +353,11 @@ class AnnealBootstrap(LightningModule):
     def training_step(self, batch: BATCH, batch_idx: int) -> Tensor:
         if self.training_era == "ebm":
             batch = {k: v.to(self.device) for k, v in batch.items()}
+            batch_size = batch["xt"].size(0)
             loss_dict = self.ebm.training_step(batch)
         else:
             batch = batch.to(self.device)
+            batch_size = batch.batch_size
             loss_dict = self.flow.training_step(batch)
 
         # log loss
@@ -360,7 +368,7 @@ class AnnealBootstrap(LightningModule):
                 on_step=False,
                 on_epoch=True,
                 prog_bar=True,
-                batch_size=batch.batch_size,
+                batch_size=batch_size,
             )
 
         return loss_dict["loss"]
@@ -373,15 +381,67 @@ class AnnealBootstrap(LightningModule):
             if self._epoch % self.hparams.ebm_inspection_interval == 0:
                 wandb_logger = fetch_wandb_logger(self.loggers)
                 if wandb_logger is not None:
+                    # evaluate EBM on evaluation dataset
                     log_probs = eval_ebm_single_molecule(self.ebm, self.eval_dl, self.device)
+
+                    # plot EBM histogram
                     plot_ebm_histogram(
                         log_probs,
-                        prefix="media/",
+                        prefix="inspect/ebm/",
                         wandb_logger=wandb_logger,
                     )
+
+                    # clear memory
+                    del(log_probs)
+                    torch.cuda.empty_cache()
+                    gc.collect()
                 else:
                     log.log(20, "No wandb logger found. Skipping EBM inspection.")
+        else:
+            if self._epoch % self.hparams.flow_inspection_interval == 0:
+                wandb_logger = fetch_wandb_logger(self.loggers)
+                if wandb_logger is not None:
+                    # Instantiate full forcefield at current temperature
+                    current_temp = self._temperature_ladder[self._temperature_index]
+                    forcefield = self.forcefield_partial.instantiate(temperature=current_temp)
+                    log.log(20, f"Forcefield Instantiated at {current_temp}K.")
 
+                    # generate data from the flow model
+                    log.log(20, "Generating data from the flow model...")
+                    mol = self.dataset.molecules[self.dataset.pdb_id]
+                    res_dict = Pipeline.generate_from_flow(
+                        n_samples=self.hparams.generate_flow_samples.n_samples,
+                        samples_per_batch=self.hparams.generate_flow_samples.samples_per_batch,
+                        n_timesteps=self.hparams.generate_flow_samples.n_timesteps,
+                        molecules=[mol],
+                        flow_model=self.flow,
+                        interpolant=self.flow_interpolant,
+                        method=self.hparams.generate_flow_samples.method,
+                        tsr_params=None,
+                    )
+
+                    # evaluate forcefield on generated samples
+                    gen_samples = res_dict[mol.name]["samples"].reshape(-1, mol.n_atoms * 3)
+                    gen_energies = forcefield(angstrom_to_nm(gen_samples), return_force=False)
+
+                    # plot energy histograms
+                    plot_energy_histograms(
+                        ode=gen_energies.numpy(),
+                        sim=self.ref_energies.numpy(),
+                        weights=None,
+                        bins=100,
+                        xlabel=r"$U(x) / k_{B}T$" + f" ({current_temp}K)",
+                        figsize=(11, 9),
+                        prefix="inspect/flow/",
+                        wandb_logger=wandb_logger,
+                    )
+
+                    # clear memory
+                    del(forcefield, res_dict, gen_samples, gen_energies, mol)
+                    torch.cuda.empty_cache()
+                    gc.collect()
+                else:
+                    log.log(20, "No wandb logger found. Skipping Flow inspection.")
 
     def optimizer_step(self, *args, **kwargs):
         super().optimizer_step(*args, **kwargs)

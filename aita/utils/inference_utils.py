@@ -11,6 +11,7 @@ from typing import Tuple, Optional
 # Stats
 ################################################################################
 
+@torch.no_grad()
 def calc_log_w(energies: torch.Tensor, log_probs: torch.Tensor) -> torch.Tensor:
     """
     Log Importance Weights
@@ -33,6 +34,7 @@ def calc_log_w(energies: torch.Tensor, log_probs: torch.Tensor) -> torch.Tensor:
     return -energies - log_probs
 
 
+@torch.no_grad()
 def quantile_clip(log_w: torch.Tensor, quantile: float = 0.999) -> torch.Tensor:
     """
     Clip log weights beyond certain quantile.
@@ -41,6 +43,7 @@ def quantile_clip(log_w: torch.Tensor, quantile: float = 0.999) -> torch.Tensor:
     return torch.where(log_w < cutoff)[0]
 
 
+@torch.no_grad()
 def quantile_filter(samples: torch.Tensor, energies: torch.Tensor, log_w: torch.Tensor, quantile: float = 0.999) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Filter samples and log weights beyond certain quantile.
@@ -49,6 +52,7 @@ def quantile_filter(samples: torch.Tensor, energies: torch.Tensor, log_w: torch.
     return samples[idx], energies[idx], log_w[idx]
 
 
+@torch.no_grad()
 def normalize_log_w(log_w: torch.Tensor) -> torch.Tensor:
     """
     Normalize log weights to sum to 1.
@@ -56,13 +60,14 @@ def normalize_log_w(log_w: torch.Tensor) -> torch.Tensor:
     return log_w - torch.logsumexp(log_w, dim=0)
 
 
+@torch.no_grad()
 def calc_ess(log_w_normalized: torch.Tensor) -> float:
     """Effective Sample Size"""
     ess = 1.0 / torch.sum(torch.exp(log_w_normalized)**2)
     ess /= log_w_normalized.shape[0]
     return ess
 
-
+@torch.no_grad()
 def importance_weighted_resample(samples: torch.Tensor, log_w_normalized: torch.Tensor) -> torch.Tensor:
     """Importance Resampling using multinomial sampling"""
     weights = torch.exp(log_w_normalized)
