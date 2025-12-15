@@ -64,7 +64,6 @@ def normalize_log_w(log_w: torch.Tensor) -> torch.Tensor:
 def calc_ess(log_w_normalized: torch.Tensor) -> float:
     """Effective Sample Size"""
     ess = 1.0 / torch.sum(torch.exp(log_w_normalized)**2)
-    ess /= log_w_normalized.shape[0]
     return ess
 
 @torch.no_grad()

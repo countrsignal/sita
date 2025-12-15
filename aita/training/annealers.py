@@ -2,6 +2,7 @@ import gc
 import os
 import numpy as np
 import mdtraj as md
+from tqdm import tqdm
 from typing import Optional, List, Dict, Union
 
 import hydra
@@ -320,21 +321,33 @@ class AnnealerADP(LightningModule):
             log_w = calc_log_w(energies=energies, log_probs=log_probs)
             log.log(20, "Log weights computed.")
 
-            # search for optimal quantile clipping threshold
-            log.log(20, "Searching for optimal quantile clipping threshold...")
-            quantiles = torch.linspace(0.9, 1.0, 11)[:-1]
-            effective_sample_sizes = []
-            for quantile in quantiles:
-                trial_log_w = log_w[quantile_clip(log_w, quantile)]
-                trial_log_w_normalized = normalize_log_w(trial_log_w)
-                effective_sample_sizes.append(calc_ess(trial_log_w_normalized))
-            effective_sample_sizes = torch.tensor(effective_sample_sizes)
-            optimal_quantile = quantiles[effective_sample_sizes.argmax()]
-            log.log(20, f"Optimal quantile clipping threshold: {optimal_quantile.item()} with ESS: {effective_sample_sizes.max().item():.4f}",)
+            #########################################################################################################################
+            # # search for optimal quantile clipping threshold
+            # log.log(20, "Searching for optimal quantile clipping threshold...")
+            # quantiles = torch.linspace(0.9, 1.0, 11)[:-1]
+            # effective_sample_sizes = []
+            # for quantile in quantiles:
+            #     trial_log_w = log_w[quantile_clip(log_w=log_w, quantile=quantile)]
+            #     trial_log_w_normalized = normalize_log_w(log_w=trial_log_w)
+            #     effective_sample_sizes.append(calc_ess(log_w_normalized=trial_log_w_normalized))
+            # effective_sample_sizes = torch.tensor(effective_sample_sizes)
+
+            # # DEBUG
+            # log.debug(f"<!>Effective sample sizes: {effective_sample_sizes}")
+
+            # optimal_quantile = quantiles[effective_sample_sizes.argmax()]
+            # ness = (effective_sample_sizes.max() / len(self.dataset))
+            # log.log(20, f"Optimal quantile clipping threshold: {optimal_quantile.item()} with ESS: {ness:.4f}")
+            #########################################################################################################################
 
             # clip log weights using optimal quantile
             samples = torch.cat(self.dataset.cache, dim=0)
-            samples, energies, log_w = quantile_filter(samples, energies, log_w, optimal_quantile)
+            samples, energies, log_w = quantile_filter(
+                samples=samples,
+                energies=energies,
+                log_w=log_w,
+                quantile=0.99,
+            )
             normalized_log_w = normalize_log_w(log_w)
 
             # plot re-weighted energy histograms
@@ -352,21 +365,22 @@ class AnnealerADP(LightningModule):
             # Importance weighted resampling
             samples, _ = importance_weighted_resample(samples, normalized_log_w)
             
-            # DEBUG
-            log.debug(f"<!>Samples shape: {samples.shape}")
+            # > save samples to numpy file for debugging
+            np.save(
+                os.path.join(self.hparams.era_ckpt_dir, f"flow_debug_samples_{curr_temp}K.npy"),
+                samples.numpy(),
+                allow_pickle=True,
+            )
 
             # Reset and update dataset with the new samples
+            # NOTE: MUST CONVERT SAMPLES BACK TO NANOMETERS THE DATASET UPDATES
+            #       > samples will be converted back to angstroms in `interpolant.plan()`
             self.dataset.clear_cache()
             self.dataset.update_dataset(
                 mol_id=mol.name,
-                samples=samples.chunk(samples.size(0), dim=0),
+                samples=angstrom_to_nm(samples).chunk(samples.size(0), dim=0),
             )
             self.dataset.training_sampler = True # NOTE: MUST BE TRUE FOR FLOW TRAINING
-
-            # DEBUG
-            log.debug(f"<!>Dataset total samples: {len(self.dataset)}")
-            testing_graph_dl = self.dataset.get_train_dataloader(self.hparams.loader.batch_size, self.hparams.loader.num_workers, self.hparams.loader.pin_memory)
-            log.debug(f"<!>Testing graph dl length: {len(testing_graph_dl)}")
 
             # move ebm back to cpu
             self.ebm = self.ebm.cpu()
