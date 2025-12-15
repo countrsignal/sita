@@ -59,7 +59,7 @@ def eval_ebm_single_molecule(
 
             if forcefield is not None:
                 dof = samples.size(1) * 3
-                ff_energies = forcefield(angstrom_to_nm(samples.reshape(-1, dof)), return_force=False)
+                ff_energies = -forcefield(angstrom_to_nm(samples.reshape(-1, dof)), return_force=False)
                 energies.append(ff_energies.cpu().flatten())
 
             log_probs.append(

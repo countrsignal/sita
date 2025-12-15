@@ -298,7 +298,7 @@ class AnnealerADP(LightningModule):
 
             ref_traj = md.load(dcd_path, top=self.dataset.pdb_path)
             ref_coords = torch.from_numpy(ref_traj.xyz).reshape(-1, dof)
-            ref_energies = forcefield(ref_coords, return_force=False)
+            ref_energies = -forcefield(ref_coords, return_force=False)
             log.log(20, "Reference energies computed.")
 
             # store reference MD data
@@ -467,7 +467,7 @@ class AnnealerADP(LightningModule):
 
                     # evaluate forcefield on generated samples
                     gen_samples = res_dict[mol.name]["samples"].reshape(-1, mol.n_atoms * 3)
-                    gen_energies = forcefield(angstrom_to_nm(gen_samples), return_force=False)
+                    gen_energies = -forcefield(angstrom_to_nm(gen_samples), return_force=False)
 
                     # plot energy histograms
                     plot_energy_histograms(
