@@ -54,7 +54,7 @@ class AnnealerADP(LightningModule):
         # Ensure that setup() is only called once
         self._is_setup = False
         # Setup at init
-        log.log(20, "Setting up bootstrap modules...")
+        log.log(20, "Setting up annealer sub-modules...")
         self.setup()
 
     def setup(self, stage: Optional[str] = None) -> None:
@@ -65,11 +65,14 @@ class AnnealerADP(LightningModule):
 
         # Setup dataset and dataloader
         self.dataset: GenerativeDatasetSingleMolecule = hydra.utils.instantiate(self.hparams.dataset)
+        # load pre-computed samples if path is provided
+        if self.hparams.get("initial_flow_samples_path") is not None and self.hparams.initial_flow_samples_path != "":
+            self.init_dataset_from_numpy(self.hparams.initial_flow_samples_path)
         log.log(20, "Dataset Initialized.")
 
         # setup MD forcefield
         # NOTE: We partial instantiate the forcefield as we will be instantiating a full forcefield for each temperature level
-        self.forcefield_partial = hydra.utils.instantiate(self.hparams.forcefield)
+        self.forcefield_partial = hydra.utils.instantiate(self.hparams.energy)
         log.log(20, "Forcefield Initialized.")
 
         # setup interpolant object
@@ -125,7 +128,27 @@ class AnnealerADP(LightningModule):
         if value not in ["ebm", "flow"]:
             raise ValueError(f"Invalid training era: {value}")
         self._training_era = value
-    
+
+    def anneal_step(self) -> None:
+        """Perform one annealing step."""
+        self._temperature_index += 1
+
+    def init_dataset_from_numpy(self, file_path: str) -> None:
+        """Initialize the dataset from a numpy file."""
+        samples_np = np.load(file_path, allow_pickle=True)
+        samples_th = torch.from_numpy(samples_np).float()
+        # clear cache
+        self.dataset.clear_cache()
+        # update dataset
+        self.dataset.update_dataset(
+            mol_id=self.dataset.pdb_id,
+            samples=samples_th.chunk(samples_th.size(0), dim=0),
+        )
+        self.dataset.training_sampler = False # NOTE: MUST BE FALSE FOR EBM TRAINING
+        # clear memory
+        del(samples_np, samples_th)
+        gc.collect()
+
     def training_model_swap(self, era: str) -> None:
         """Swap which model is being trained. Also re-initializes EMA if using."""
 
@@ -149,13 +172,15 @@ class AnnealerADP(LightningModule):
             # re-initialize EMA if using
             if self.ema is not None:
                 # > save EBM ema model weights from previous era
-                temp = self._temperature_ladder[self._temperature_index]
+                if self._temperature_index == 0:
+                    temp = 1200
+                else:
+                    temp = self._temperature_ladder[self._temperature_index - 1]
                 torch.save(self.ema.ema_model.state_dict(), os.path.join(self.hparams.era_ckpt_dir, f"ebm_ema_model_{temp}K.pth"))
                 # > re-initialize EMA
                 self.ema = hydra.utils.instantiate(self.hparams.ema, model=self.flow)
         
         self.training_era = era
-        self._temperature_index += 1
     
     def train_dataloader(self):
         return self.dataset.get_train_dataloader(self.hparams.loader.batch_size, self.hparams.loader.num_workers, self.hparams.loader.pin_memory)
@@ -192,9 +217,10 @@ class AnnealerADP(LightningModule):
             self.flow.eval();
             
             if self._temperature_index == 0:
+                temp = 1200
                 log.log(20, "Generating data from the pre-trained flow model at 1200 Kelvin ...")
             else:
-                temp = self._temperature_ladder[self._temperature_index - 1]
+                temp = self._temperature_ladder[self._temperature_index]
                 log.log(20, f"Generating annealed data from the flow model at {temp} Kelvin ...")
 
             # generate data from the flow model
@@ -220,12 +246,11 @@ class AnnealerADP(LightningModule):
             self.dataset.training_sampler = False # NOTE: MUST BE FALSE FOR EBM TRAINING
 
             # save generated samples in numpy file
-            if self._temperature_index > 0:
-                np.save(
-                    os.path.join(self.hparams.era_ckpt_dir, f"flow_samples_{temp}K.npy"),
-                    res_dict[mol.name]["samples"].numpy(),
-                    allow_pickle=True,
-                )
+            np.save(
+                os.path.join(self.hparams.era_ckpt_dir, f"flow_samples_{temp}K.npy"),
+                res_dict[mol.name]["samples"].numpy(),
+                allow_pickle=True,
+            )
 
             # setup evaluation dataloader
             self.eval_dl = self.dataset.get_eval_dataloader(
@@ -258,7 +283,7 @@ class AnnealerADP(LightningModule):
                 log.log(20, f"Annealing from {prev_temp}K -> {curr_temp}K ...")
 
             # Instantiate full forcefield at current temperature
-            forcefield = self.forcefield_partial.instantiate(temperature=curr_temp)
+            forcefield = self.forcefield_partial(temperature=curr_temp)
             log.log(20, f"Forcefield Instantiated at {curr_temp}K.")
 
             # load reference MD data and compute energies
@@ -267,6 +292,10 @@ class AnnealerADP(LightningModule):
             dof = mol.n_atoms * 3
             dcd_dir  = self.dataset.data_path / "mds" / "temperature"
             dcd_path = list(dcd_dir.glob(f"{mol.name}_{curr_temp}K*.dcd"))[0]
+
+            # DEBUG
+            log.debug(f"<!>DCD path: {dcd_path}")
+
             ref_traj = md.load(dcd_path, top=self.dataset.pdb_path)
             ref_coords = torch.from_numpy(ref_traj.xyz).reshape(-1, dof)
             ref_energies = forcefield(ref_coords, return_force=False)
@@ -316,12 +345,15 @@ class AnnealerADP(LightningModule):
                 bins=100,
                 xlabel=r"$U(x) / k_{B}T$" + f" ({curr_temp}K)",
                 figsize=(11, 9),
-                prefix="anneal_step/",
+                prefix="anneal_step",
                 wandb_logger=wandb_logger,
             )
 
             # Importance weighted resampling
             samples, _ = importance_weighted_resample(samples, normalized_log_w)
+            
+            # DEBUG
+            log.debug(f"<!>Samples shape: {samples.shape}")
 
             # Reset and update dataset with the new samples
             self.dataset.clear_cache()
@@ -330,6 +362,11 @@ class AnnealerADP(LightningModule):
                 samples=samples.chunk(samples.size(0), dim=0),
             )
             self.dataset.training_sampler = True # NOTE: MUST BE TRUE FOR FLOW TRAINING
+
+            # DEBUG
+            log.debug(f"<!>Dataset total samples: {len(self.dataset)}")
+            testing_graph_dl = self.dataset.get_train_dataloader(self.hparams.loader.batch_size, self.hparams.loader.num_workers, self.hparams.loader.pin_memory)
+            log.debug(f"<!>Testing graph dl length: {len(testing_graph_dl)}")
 
             # move ebm back to cpu
             self.ebm = self.ebm.cpu()
@@ -377,6 +414,10 @@ class AnnealerADP(LightningModule):
         super().on_train_epoch_end()
 
         self._epoch += 1
+
+        ################################################################################
+        # EBM Training Epoch End
+        ################################################################################
         if self.training_era == "ebm":
             if self._epoch % self.hparams.ebm_inspection_interval == 0:
                 wandb_logger = fetch_wandb_logger(self.loggers)
@@ -397,13 +438,17 @@ class AnnealerADP(LightningModule):
                     gc.collect()
                 else:
                     log.log(20, "No wandb logger found. Skipping EBM inspection.")
+
+        ################################################################################
+        # Flow Training Epoch End
+        ################################################################################
         else:
             if self._epoch % self.hparams.flow_inspection_interval == 0:
                 wandb_logger = fetch_wandb_logger(self.loggers)
                 if wandb_logger is not None:
                     # Instantiate full forcefield at current temperature
                     current_temp = self._temperature_ladder[self._temperature_index]
-                    forcefield = self.forcefield_partial.instantiate(temperature=current_temp)
+                    forcefield = self.forcefield_partial(temperature=current_temp)
                     log.log(20, f"Forcefield Instantiated at {current_temp}K.")
 
                     # generate data from the flow model

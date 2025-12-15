@@ -70,7 +70,7 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     task_name = cfg.get("task_name")
     is_flow = task_name.endswith("flow")
 
-    log.log(20, f"Instantiating LitBootstrap module...")
+    log.log(20, f"Instantiating Pre-Training module...")
     model: Union[PreTrainerFlow, PreTrainerEBM] = PreTrainerFlow(cfg) if is_flow else PreTrainerEBM(cfg)
 
     log.log(20, "Instantiating callbacks...")

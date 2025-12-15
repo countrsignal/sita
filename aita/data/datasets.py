@@ -302,6 +302,7 @@ class GenerativeDatasetSingleMolecule(Dataset):
 
     def clear_cache(self) -> None:
         self._cache = []
+        self.backmap = {}
 
     @property
     def training_sampler(self):
