@@ -116,6 +116,7 @@ class AnnealerADP(LightningModule):
         
         # variable trackers
         self._epoch: int = 0
+        self._cumulative_step: int = 0
         self._training_era: str = "ebm"
         self._temperature_index: int = 0
         self._temperature_ladder: List[int] = self.hparams.temperature_ladder
@@ -422,11 +423,30 @@ class AnnealerADP(LightningModule):
                 batch_size=batch_size,
             )
 
+        # increment cumulative step
+        self._cumulative_step += 1
+
         return loss_dict["loss"]
 
     def on_train_epoch_end(self) -> None:
         super().on_train_epoch_end()
 
+        # log average trainign progress
+        wandb_logger = fetch_wandb_logger(self.loggers)
+        if wandb_logger is None:
+            return
+
+        # Lightning has already reduced on_epoch metrics; pull the averaged values
+        metrics = {
+            k: v.detach().item()
+            for k, v in self.trainer.callback_metrics.items()
+            if k.startswith(f"{self.training_era}/")
+        }
+
+        # log metrics
+        wandb_logger.log_metrics(metrics, step=self._cumulative_step)
+
+        # increment epoch
         self._epoch += 1
 
         ################################################################################
@@ -436,6 +456,8 @@ class AnnealerADP(LightningModule):
             if self._epoch % self.hparams.ebm_inspection_interval == 0:
                 wandb_logger = fetch_wandb_logger(self.loggers)
                 if wandb_logger is not None:
+                    log.log(20, f"Logging EBM inspection at end of epoch {self._epoch}...")
+
                     # evaluate EBM on evaluation dataset
                     log_probs = eval_ebm_single_molecule(self.ebm, self.eval_dl, self.device)
 
@@ -460,6 +482,8 @@ class AnnealerADP(LightningModule):
             if self._epoch % self.hparams.flow_inspection_interval == 0:
                 wandb_logger = fetch_wandb_logger(self.loggers)
                 if wandb_logger is not None:
+                    log.log(20, f"Logging Flow inspection at end of epoch {self._epoch}...")
+
                     # Instantiate full forcefield at current temperature
                     current_temp = self._temperature_ladder[self._temperature_index]
                     forcefield = self.forcefield_partial(temperature=current_temp)

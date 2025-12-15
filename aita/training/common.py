@@ -1,6 +1,6 @@
 import gc
 from tqdm import tqdm
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import torch
 from lightning.pytorch.loggers import WandbLogger
