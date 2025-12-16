@@ -41,10 +41,10 @@ optimizer:
 #########################
 
 temperature_ladder: [1028, 881, 755, 648, 555, 476, 408, 349, 300]
-n_epochs_finetune: 1
+n_epochs_finetune: 50
 era_ckpt_dir: ${paths.output_dir}/era_ckpts
-ebm_inspection_interval: 1 #100
-flow_inspection_interval: 1 #125
+ebm_inspection_interval: 25
+flow_inspection_interval: 25
 flow_model_ckpt: ${paths.root_dir}/experimental_results/pretrain_flow/runs/2025-12-12_23-04-17/ema_model.pth
 initial_flow_samples_path: null #${paths.root_dir}/experimental_results/flow_samples_1200K.npy
 
@@ -56,15 +56,15 @@ plans:
     _target_: aita.plans.TrigPlanLite
 
 generate_ebm_dataset:
-  n_samples: 1536 #100_000
-  samples_per_batch: 512 #5_000
+  n_samples: 100_000
+  samples_per_batch: 5_000
   n_timesteps: 100
   method: "dopri5"
   tsr_params: null
 
 generate_flow_samples:
-  n_samples: 1536 #20_000
-  samples_per_batch: 512 #5_000
+  n_samples: 20_000
+  samples_per_batch: 5_000
   n_timesteps: 100
   method: "dopri5"
   tsr_params: null

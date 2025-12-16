@@ -46,9 +46,8 @@ echo "WANDB_ENTITY='${USERNAME}'" > .env
 ############################
 echo "Launching training script..."
 python "$PRETRAIN_SCRIPT" experiment=anneal_adp \
-        trainer.max_epochs=1 \
-        loader.batch_size=512 \
-        trainer.log_every_n_steps=1
+        trainer.max_epochs=500 \
+        loader.batch_size=512
 
 echo "Training COMPLETE."
 exit 0

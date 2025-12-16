@@ -355,7 +355,7 @@ class AnnealerADP(LightningModule):
             plot_energy_histograms(
                 ode=energies.numpy(),
                 sim=ref_energies.numpy(),
-                weights=normalized_log_w.numpy(),
+                weights=normalized_log_w.exp().numpy(), # NOTE: we exponentiate the weights to get the actual weights
                 bins=100,
                 xlabel=r"$U(x) / k_{B}T$" + f" ({curr_temp}K)",
                 figsize=(11, 9),
@@ -364,7 +364,7 @@ class AnnealerADP(LightningModule):
             )
 
             # Importance weighted resampling
-            samples, _ = importance_weighted_resample(samples, normalized_log_w)
+            samples, _ = importance_weighted_resample(samples, normalized_log_w) # NOTE: weights are exponentiated inside the function
             
             # > save samples to numpy file for debugging
             np.save(
