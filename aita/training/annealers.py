@@ -365,7 +365,7 @@ class AnnealerADP(LightningModule):
 
             # Importance weighted resampling
             samples, _ = importance_weighted_resample(samples, normalized_log_w) # NOTE: weights are exponentiated inside the function
-            
+
             # > save samples to numpy file for debugging
             np.save(
                 os.path.join(self.hparams.era_ckpt_dir, f"flow_debug_samples_{curr_temp}K.npy"),

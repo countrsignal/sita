@@ -1,4 +1,4 @@
-from typing import Optional, Tuple, Dict
+from typing import Optional, Tuple, Dict, Any
 
 import torch
 from torch import nn
@@ -14,6 +14,11 @@ class EBM(nn.Module):
     ) -> None:
         super().__init__()
         self.net = net
+
+    def load_from_checkpoint(self, checkpoint_path: str, **kwargs: Any) -> "EBM":
+        checkpoint = torch.load(checkpoint_path, **kwargs)
+        self.load_state_dict(checkpoint)
+        return self
 
     def forward(
         self,

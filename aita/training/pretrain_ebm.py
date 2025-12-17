@@ -67,6 +67,9 @@ class PreTrainerEBM(LightningModule):
         
         # setup model
         self.ebm = hydra.utils.instantiate(self.hparams.ebm)
+        if self.hparams.ebm_ckpt is not None:
+            self.ebm = self.ebm.load_from_checkpoint(self.hparams.ebm_ckpt, weights_only=True, map_location="cpu")
+            log.log(20, "Checkpointed EBM weights loaded.")
         log.log(20, "EBM Initialized.")
 
         # exponential moving average
@@ -111,62 +114,84 @@ class PreTrainerEBM(LightningModule):
         # Generate training data from the flow model
         #################################################################################
         # Initialize flow model
-        log.log(20, "Loading pre-trained flow model...")
-        flow_model = hydra.utils.instantiate(self.hparams.flow)
-        flow_model = flow_model.load_from_checkpoint(self.hparams.flow_model_ckpt, weights_only=True, map_location="cpu")
+        if self.hparams.flow_model_ckpt is not None:
+            log.log(20, "Loading pre-trained flow model...")
+            flow_model = hydra.utils.instantiate(self.hparams.flow)
+            flow_model = flow_model.load_from_checkpoint(self.hparams.flow_model_ckpt, weights_only=True, map_location="cpu")
+            
+            # compile model for faster inference
+            flow_model.edge_embedding = torch.compile(flow_model.edge_embedding)
+            for idx in range(flow_model.gvp_decoder.n_layers):
+                flow_model.gvp_decoder.edge_updater[idx] = torch.compile(flow_model.gvp_decoder.edge_updater[idx])
+            flow_model.gvp_decoder.position_updater = torch.compile(flow_model.gvp_decoder.position_updater)
+            
+            # move to device
+            flow_model = flow_model.to(self.device)
+            flow_model.eval()
+
+            # NOTE: for EBM pre-training we use partial initalization
+            flow_plan = hydra.utils.instantiate(self.hparams.plans.flow_plan)
+            interpolant = hydra.utils.instantiate(self.hparams.interpolant)(plan=flow_plan)
+
+            log.log(20, "Generating synthetic data from the flow model...")
+            mol = self.dataset.molecules[self.dataset.pdb_id]
+            res_dict = Pipeline.generate_from_flow(
+                n_samples=self.hparams.sample_from_flow.n_samples,
+                samples_per_batch=self.hparams.sample_from_flow.samples_per_batch,
+                n_timesteps=self.hparams.sample_from_flow.n_timesteps,
+                molecules=[mol],
+                flow_model=flow_model,
+                interpolant=interpolant,
+                method=self.hparams.sample_from_flow.method,
+                tsr_params=self.hparams.sample_from_flow.tsr_params,
+            )
+            log.log(20, "Data generation completed.")
+
+            # update dataset with the new samples
+            self.dataset.update_dataset(
+                mol_id=mol.name,
+                samples=res_dict[mol.name]["samples"].chunk(self.hparams.sample_from_flow.n_samples, dim=0),
+            )
+
+            # save generated samples in numpy file
+            np.save(
+                self.hparams.sample_from_flow.output_path,
+                res_dict[mol.name]["samples"].numpy(),
+                allow_pickle=True,
+            )
+
+            # setup evaluation dataloader
+            self.eval_dl = self.dataset.get_eval_dataloader(
+                self.hparams.loader.batch_size,
+                num_workers=0,
+                pin_memory=False,
+            )
+
+            # clear memory
+            del(mol, res_dict, interpolant, flow_model, flow_plan)
+            torch.cuda.empty_cache()
+            gc.collect()
         
-        # compile model for faster inference
-        flow_model.edge_embedding = torch.compile(flow_model.edge_embedding)
-        for idx in range(flow_model.gvp_decoder.n_layers):
-            flow_model.gvp_decoder.edge_updater[idx] = torch.compile(flow_model.gvp_decoder.edge_updater[idx])
-        flow_model.gvp_decoder.position_updater = torch.compile(flow_model.gvp_decoder.position_updater)
-        
-        # move to device
-        flow_model = flow_model.to(self.device)
-        flow_model.eval()
+        else:
+            assert self.hparams.flow_samples_path is not None, "`flow_samples_path` must be provided"
+            flow_samples_np = np.load(self.hparams.flow_samples_path, allow_pickle=True)
+            flow_samples_th = torch.from_numpy(flow_samples_np)
+            mol = self.dataset.molecules[self.dataset.pdb_id]
+            self.dataset.update_dataset(
+                mol_id=mol.name,
+                samples=flow_samples_th.chunk(flow_samples_th.size(0), dim=0),
+            )
 
-        # NOTE: for EBM pre-training we use partial initalization
-        flow_plan = hydra.utils.instantiate(self.hparams.plans.flow_plan)
-        interpolant = hydra.utils.instantiate(self.hparams.interpolant)(plan=flow_plan)
+            # setup evaluation dataloader
+            self.eval_dl = self.dataset.get_eval_dataloader(
+                self.hparams.loader.batch_size,
+                num_workers=0,
+                pin_memory=False,
+            )
 
-        log.log(20, "Generating synthetic data from the flow model...")
-        mol = self.dataset.molecules[self.dataset.pdb_id]
-        res_dict = Pipeline.generate_from_flow(
-            n_samples=self.hparams.sample_from_flow.n_samples,
-            samples_per_batch=self.hparams.sample_from_flow.samples_per_batch,
-            n_timesteps=self.hparams.sample_from_flow.n_timesteps,
-            molecules=[mol],
-            flow_model=flow_model,
-            interpolant=interpolant,
-            method=self.hparams.sample_from_flow.method,
-            tsr_params=self.hparams.sample_from_flow.tsr_params,
-        )
-        log.log(20, "Data generation completed.")
-
-        # update dataset with the new samples
-        self.dataset.update_dataset(
-            mol_id=mol.name,
-            samples=res_dict[mol.name]["samples"].chunk(self.hparams.sample_from_flow.n_samples, dim=0),
-        )
-
-        # save generated samples in numpy file
-        np.save(
-            self.hparams.sample_from_flow.output_path,
-            res_dict[mol.name]["samples"].numpy(),
-            allow_pickle=True,
-        )
-
-        # setup evaluation dataloader
-        self.eval_dl = self.dataset.get_eval_dataloader(
-            self.hparams.loader.batch_size,
-            num_workers=0,
-            pin_memory=False,
-        )
-
-        # clear memory
-        del(mol, res_dict, interpolant, flow_model, flow_plan)
-        torch.cuda.empty_cache()
-        gc.collect()
+            # clear memory
+            del(mol, flow_samples_np, flow_samples_th)
+            gc.collect()
 
     def on_before_batch_transfer(self, batch: Dict[str, Tensor], dataloader_idx: int) -> Dict[str, Tensor]:
         # NOTE: we perform all the necessary data transformations here on CPU

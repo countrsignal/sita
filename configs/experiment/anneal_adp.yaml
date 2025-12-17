@@ -41,10 +41,10 @@ optimizer:
 #########################
 
 temperature_ladder: [1028, 881, 755, 648, 555, 476, 408, 349, 300]
-n_epochs_finetune: 50
+n_epochs_finetune: 100
 era_ckpt_dir: ${paths.output_dir}/era_ckpts
-ebm_inspection_interval: 25
-flow_inspection_interval: 25
+ebm_inspection_interval: 50
+flow_inspection_interval: 50
 flow_model_ckpt: ${paths.root_dir}/experimental_results/pretrain_flow/runs/2025-12-12_23-04-17/ema_model.pth
 initial_flow_samples_path: null #${paths.root_dir}/experimental_results/flow_samples_1200K.npy
 
