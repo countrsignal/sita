@@ -52,7 +52,7 @@ ebm_ckpt: ${paths.root_dir}/experimental_results/anneal_adp/runs/2025-12-15_23-5
 flow_model_ckpt: null # ${paths.root_dir}/experimental_results/pretrain_flow/runs/2025-11-17_12-59-00/ema_model.pth
 flow_samples_path: ${paths.root_dir}/experimental_results/tsr_samples.npy
 
-ebm_inspection_interval: 100
+ebm_inspection_interval: 25
 
 sample_from_flow:
   output_path: ${paths.output_dir}/alanine_dipeptide_samples.npy

@@ -104,6 +104,7 @@ def plot_energy_histograms(
     ylabel: str = "Density",
     title: str = None,
     kde: bool = False,
+    x_lim: Optional[Tuple[float, float]] = None,
     prefix: str = '',
     wandb_logger: Optional[WandbLogger] = None,
 ) -> None:
@@ -188,6 +189,9 @@ def plot_energy_histograms(
         ax.set_xlabel(xlabel or "Value", labelpad=10, fontsize=45)
         ax.set_ylabel(ylabel, labelpad=10, fontsize=45)
 
+        if x_lim is not None:
+            ax.set_xlim(x_lim)
+
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
         ax.legend(frameon=False, fontsize=25)
@@ -204,7 +208,6 @@ def plot_energy_histograms(
 @clean_up_plots
 def adp_ramachandran_plot(
     samples: np.ndarray,
-    energies: np.ndarray,
     pdb_path: str,
     figsize: tuple = (11, 9),
     prefix: str = '',
@@ -228,7 +231,7 @@ def adp_ramachandran_plot(
     if len(samples.shape) == 2:
         samples = samples.reshape(-1, 22, 3)
 
-    angles = adp_torsion_angles(samples, energies, pdb_path)
+    angles = adp_torsion_angles(samples, pdb_path)
     plot_range = [-np.pi, np.pi]
 
     # Ramachandran plot #########################################################

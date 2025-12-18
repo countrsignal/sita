@@ -134,9 +134,9 @@ def map_chirality_batch(samples: np.ndarray) -> np.ndarray:
     return samples_mapped
 
 
-def adp_torsion_angles(samples: np.ndarray, energies: np.ndarray, pdb_path: str) -> np.ndarray:
+def adp_torsion_angles(samples: np.ndarray, pdb_path: str) -> np.ndarray:
     samples_mapped = map_chirality_batch(samples)
-    traj_samples = md.Trajectory(samples_mapped[energies < 75.0], topology=md.load_topology(pdb_path))
+    traj_samples = md.Trajectory(samples_mapped, topology=md.load_topology(pdb_path))
     phi_indices, psi_indices = [4, 6, 8, 14], [6, 8, 14, 16]
     angles = md.compute_dihedrals(traj_samples, [phi_indices, psi_indices])
     return angles
