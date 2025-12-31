@@ -81,6 +81,8 @@ class Interpolant:
         n_timesteps: int,
         model: torch.nn.Module,
         method: str = "dopri5",
+        prior_beta: float = 1.0,
+        temperature: Optional[float] = None,
         tsr_params: Optional[Dict[str, float]] = None,
     ) -> torch.Tensor:
         """
@@ -103,10 +105,15 @@ class Interpolant:
         g = mol.inference_graph_setup(batch_size)
 
         # Prepare state and time variables
-        x_init = torch.randn((batch_size * mol.n_atoms, 3))
+        x_init = prior_beta * torch.randn((batch_size * mol.n_atoms, 3))
         x_init = scatter_center_mol(x_init, g)
         x_init = x_init.view(batch_size, mol.n_atoms * 3)
         time_span = torch.linspace(0.0, 1.0, n_timesteps + 1)
+
+        # add temperature to the graph
+        if temperature is not None:
+            # NOTE: This should only be used for the tempered-flow models
+            g.ndata["temperature"] = torch.full((g.num_nodes(),), temperature, dtype=torch.float32)
 
         # move data to device
         g = g.to(device)
@@ -114,7 +121,7 @@ class Interpolant:
         time_span = time_span.to(device)
 
         # create the forward function
-        if tsr_params is None:
+        if tsr_params is None or len(tsr_params) == 0:
             forward_fn = partial(self.ode_forward, g=g, model=model)
         else:
             time_span = time_span[:-1] # NOTE: we exclude the final time step to avoid numerical instability
@@ -133,7 +140,7 @@ class Interpolant:
         return velocity, score
 
     def _eurler_maruyama_step(self, dt: float, t: Union[float, torch.Tensor], x: torch.Tensor, g: dgl.DGLGraph, model: torch.nn.Module) -> torch.Tensor:
-        diffusion_ceoff = self.plan.sigma_t(t).view(-1, 1)
+        diffusion_ceoff = self.plan.sigma_t(t).view(-1, 1) ** 2
         velocity, score = self.sde_forward(t, x, g, model)
 
         # Brownian motion
@@ -143,7 +150,7 @@ class Interpolant:
         dw = dw.view(x.shape)
 
         # Euler-Maruyama update
-        drift  = velocity + diffusion_ceoff * score
+        drift  = velocity + 0.5 * diffusion_ceoff * score
         mean_x = x + drift * dt
         return mean_x + torch.sqrt(diffusion_ceoff) * dw
 

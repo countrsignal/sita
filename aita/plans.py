@@ -256,8 +256,7 @@ class TrigPlan(Plan):
     
     def compute_tsr(self, t: torch.Tensor, rho: float, k: float) -> torch.Tensor:
         half_pi = torch.pi / 2
-        tan_t = torch.tan(t * half_pi) # TODO: clamp
-        cot_t = 1 / tan_t
+        tan_t = torch.tan(t * half_pi)
         snr = tan_t ** 2
         r2 = rho ** 2
         r2_over_k = r2 / k
@@ -280,7 +279,9 @@ class TrigPlan(Plan):
 
         half_pi = torch.pi / 2
         tan_t = torch.tan(t * half_pi)
-        cot_t = 1 / torch.clamp_min(tan_t, min=1e-3)
+
+        t_safe = torch.where(torch.isclose(t, torch.zeros_like(t)), 1e-3, t)
+        cot_t = torch.tan((1 - t_safe) * half_pi)
         snr = tan_t ** 2
 
         r2 = rho ** 2

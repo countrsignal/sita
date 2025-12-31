@@ -14,9 +14,11 @@ from torch import Tensor
 
 from lightning import LightningModule
 
-from ..utils.logging import RankedLogger
+from ..models.ebms import EBM
 from ..pipeline.pipeline import Pipeline
+from ..utils.logging import RankedLogger
 from ..models.vector_field_v2 import VFV2
+from ..models.vector_field_tempered import VFT
 from ..utils.data_utils import angstrom_to_nm
 from ..data.datasets import GenerativeDatasetSingleMolecule
 from .common import fetch_wandb_logger, eval_ebm_single_molecule
@@ -35,10 +37,17 @@ BATCH_FLOW = dgl.DGLGraph
 BATCH_EBM = Dict[str, Tensor]
 BATCH = Union[BATCH_FLOW, BATCH_EBM]
 
+EBM_MODEL = EBM
+FLOW_MODEL = Union[VFV2, VFT]
+
 ###################################
 # functions
 ###################################
 
+def add_temperature_to_batch(batch: BATCH_FLOW, temperature: float) -> BATCH_FLOW:
+    """Add temperature to the batch."""
+    batch.ndata["temperature"] = torch.full((batch.num_nodes(),), temperature, dtype=torch.float32)
+    return batch
 
 ###################################
 # Classes
@@ -93,10 +102,10 @@ class AnnealerADP(LightningModule):
         
         # setup models
         # > setup EBM
-        self.ebm = hydra.utils.instantiate(self.hparams.ebm)
+        self.ebm: EBM_MODEL = hydra.utils.instantiate(self.hparams.ebm)
         log.log(20, "EBM Initialized.")
         # > load pre-trained flow model
-        self.flow: VFV2 = hydra.utils.instantiate(self.hparams.flow)
+        self.flow: FLOW_MODEL = hydra.utils.instantiate(self.hparams.flow)
         self.flow = self.flow.load_from_checkpoint(self.hparams.flow_model_ckpt, weights_only=True, map_location="cpu")
         log.log(20, "Pre-trained Flow Model Loaded.")
 
@@ -225,6 +234,13 @@ class AnnealerADP(LightningModule):
                 temp = self._temperature_ladder[self._temperature_index]
                 log.log(20, f"Generating annealed data from the flow model at {temp} Kelvin ...")
 
+            # Check if we anneal the prior
+            if self.hparams.get("anneal_prior", False):
+                assert isinstance(self.flow, VFT) is False, "Prior annealing is only supported for non-tempered flow models"
+                prior_beta = self.hparams.anneal_prior.prior_beta
+            else:
+                prior_beta = 1.0
+
             # generate data from the flow model
             mol = self.dataset.molecules[self.dataset.pdb_id]
             res_dict = Pipeline.generate_from_flow(
@@ -235,7 +251,9 @@ class AnnealerADP(LightningModule):
                 flow_model=self.flow,
                 interpolant=self.flow_interpolant,
                 method=self.hparams.generate_ebm_dataset.method,
-                tsr_params=self.hparams.generate_ebm_dataset.tsr_params,
+                prior_beta=prior_beta,
+                temperature=temp if isinstance(self.flow, VFT) else None,
+                tsr_params=self.hparams.generate_ebm_dataset.get("tsr_params", None),
             )
             log.log(20, "Data generation completed.")
 
@@ -347,9 +365,12 @@ class AnnealerADP(LightningModule):
                 samples=samples,
                 energies=energies,
                 log_w=log_w,
-                quantile=0.99,
+                quantile=self.hparams.iw_quantile,
             )
             normalized_log_w = normalize_log_w(log_w)
+            ness = calc_ess(normalized_log_w) / normalized_log_w.size(0)
+            log.log(20, f"Effective sample size: {ness:.4f}")
+            wandb_logger.log_metrics({"ESS": ness}, step=self._cumulative_step)
 
             # plot re-weighted energy histograms
             plot_energy_histograms(
@@ -359,6 +380,7 @@ class AnnealerADP(LightningModule):
                 bins=100,
                 xlabel=r"$U(x) / k_{B}T$" + f" ({curr_temp}K)",
                 figsize=(11, 9),
+                x_lim=(ref_energies.min().item(), ref_energies.max().item() * 1.5),
                 prefix="anneal_step",
                 wandb_logger=wandb_logger,
             )
@@ -400,6 +422,11 @@ class AnnealerADP(LightningModule):
             batch = self.flow_interpolant.plan(batch)
             if self.pipeline is not None:
                 batch = self.pipeline.run_flow(batch, is_training=True)
+
+            # NOTE: Explicit temperature dependency for VFT models
+            if isinstance(self.flow, VFT):
+                batch = add_temperature_to_batch(batch, self._temperature_ladder[self._temperature_index])
+
         return batch
 
     def training_step(self, batch: BATCH, batch_idx: int) -> Tensor:
@@ -500,7 +527,9 @@ class AnnealerADP(LightningModule):
                         flow_model=self.flow,
                         interpolant=self.flow_interpolant,
                         method=self.hparams.generate_flow_samples.method,
-                        tsr_params=None,
+                        prior_beta=1.0, # NOTE: we always use the prior beta of 1.0 during inspection
+                        temperature=current_temp if isinstance(self.flow, VFT) else None,
+                        tsr_params=self.hparams.generate_flow_samples.get("tsr_params", None),
                     )
 
                     # evaluate forcefield on generated samples
@@ -515,6 +544,7 @@ class AnnealerADP(LightningModule):
                         bins=100,
                         xlabel=r"$U(x) / k_{B}T$" + f" ({current_temp}K)",
                         figsize=(11, 9),
+                        x_lim=(self.ref_energies.min().item(), self.ref_energies.max().item() * 1.5),
                         prefix="inspect/flow/",
                         wandb_logger=wandb_logger,
                     )

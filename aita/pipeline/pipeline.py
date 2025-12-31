@@ -1,15 +1,12 @@
 import dgl
 import torch
-import numpy as np
 
 import hydra
 from omegaconf import DictConfig
 
-import gc
 from tqdm import tqdm
-from pathlib import Path
 from abc import ABC, abstractmethod
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any
 
 from ..data.molecule import Molecule
 from ..interpolants import Interpolant
@@ -66,7 +63,6 @@ class Pipeline:
             else:
                 self.flow_inference = []
         
-        
         # Setup ebm protocol
         if "ebm" not in self.config:
             self.ebm_train = []
@@ -120,8 +116,7 @@ class Pipeline:
         molecules: List[Molecule],
         flow_model: torch.nn.Module,
         interpolant: Interpolant,
-        method: str = "dopri5",
-        tsr_params: Optional[Dict[str, float]] = None,
+        **kwargs: Any,
     ) -> Dict[str, Dict[str, torch.Tensor]]:
         """
         Generate samples from the flow model.
@@ -138,8 +133,7 @@ class Pipeline:
                     model=flow_model,
                     batch_size=samples_per_batch,
                     n_timesteps=n_timesteps,
-                    method=method,
-                    tsr_params=tsr_params,
+                    **kwargs,
                 )
                 samples_th.append(batch_samples.detach().cpu())
         results_dict[mol.name] = {"samples": torch.cat(samples_th, dim=0)}

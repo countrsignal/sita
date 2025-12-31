@@ -1,4 +1,4 @@
-from typing import Union, Any
+from typing import Union, Tuple, Any
 
 import dgl
 import torch
@@ -171,3 +171,51 @@ class VFV3(nn.Module):
         loss_dict = {**loss_dict, "vf_loss": vf_loss}
         loss_dict["loss"] = loss_dict["vf_loss"] + loss_dict["sm_loss"] + loss_dict["nce_loss"]
         return loss_dict
+
+    def inference_fwd(self, graph: dgl.DGLGraph) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        # flow forward pass ==================================================================
+        # initialize the coordinates and velocities
+        x_init = graph.ndata["xt"].clone()  # (num_nodes, 3)
+        device = x_init.device
+        v_init = torch.zeros(
+            graph.num_nodes(),
+            self.n_vec_channels,
+            3,
+            device=device,
+        )  # (num_nodes, n_vec_channels, 3)
+
+        # encode the atom features
+        node_repr = self.atom_encoder(
+            time=graph.ndata["t"].view(-1),
+            attr=graph.ndata["attr"],
+            atom_index=graph.ndata["atom_index"].view(-1),
+        )
+        # node_repr: (num_nodes, n_hidden)
+
+        # embed the edge features
+        edge_mask = ~torch.all(graph.edata["attr"] == 0, dim=-1).unsqueeze(dim=-1)
+        edge_repr = self.edge_embedding(graph.edata["attr"]) * edge_mask
+        # edge_repr: (num_edges, n_hidden_edge)
+
+        # predict the vector field
+        velocity, hs, vs, edge_repr = self.gvp_decoder(node_repr, v_init, x_init, edge_repr, edge_mask, graph)
+        # velocity: (num_nodes, 3)
+        # hs: (num_nodes, n_hidden)
+        # vs: (num_nodes, n_vec_channels, 3)
+        # edge_repr: (num_edges, n_hidden_edge)
+
+        # EBM forward pass ==================================================================
+        score, energy = self.ebm.fwd_with_grad(
+            x_t=graph.ndata["xt"],
+            time=graph.ndata["t"].view(-1),
+            node_scalars=hs,
+            node_vectors=vs,
+            edge_feats=edge_repr,
+            graph=graph,
+            require_grad=True,
+        )
+        # score: (num_nodes, 3)
+        # energy: (num_molecules, )
+        # ====================================================================================
+
+        return velocity, score, energy

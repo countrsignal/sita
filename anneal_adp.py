@@ -112,25 +112,37 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         os.makedirs(cfg.era_ckpt_dir, exist_ok=True)
 
         # pre-train the EBM at samples from 1200K
-        log.log(20, "Pre-training the EBM at samples from 1200K!")
-        trainer.fit(model=model, ckpt_path=cfg.get("ckpt_path"))
-        torch.cuda.empty_cache()
-        log.log(20, "EBM pre-training phase complete!")
+        if cfg.get("ebm_model_ckpt", None) is None:
+            log.log(20, "Pre-training the EBM at samples from 1200K!")
+            trainer.fit(model=model, ckpt_path=cfg.get("ckpt_path"))
+            torch.cuda.empty_cache()
+            log.log(20, "EBM pre-training phase complete!")
+        else:
+            log.log(20, "Loading pre-trained EBM model...")
+            model.ebm = model.ebm.load_from_checkpoint(cfg.ebm_model_ckpt, weights_only=True, map_location="cpu")
+            log.log(20, "Pre-trained EBM model loaded!")
+
+            # NOTE: we must populate the dataset with samples from the pre-trained flow model
+            log.log(20, "Populating the dataset with samples from the pre-trained flow model...")
+            model = model.cuda()
+            model.on_fit_start() # NOTE: this is safe as the training_era is set to "ebm" at initialization
+            log.log(20, "Dataset populated with samples from the pre-trained flow model!")
+
 
         # Annealing process
         log.log(20, "Starting the annealing process!")
         ladder_length = len(cfg.temperature_ladder) * 2
         for i in range(1, ladder_length + 1):
-
-            # Reset the trainer
-            del(trainer)
-            trainer = reset_trainer(cfg, cfg.n_epochs_finetune, callbacks=callbacks, logger=logger)
-
             # Determine which model will be trained in current era
             if (i % 2 == 0):
                 current_era = "ebm"
             else:
                 current_era = "flow"
+
+            # Reset the trainer
+            del(trainer)
+            n_epochs_finetune = cfg.get("n_epochs_finetune_ebm") if current_era == "ebm" else cfg.get("n_epochs_finetune_flow")
+            trainer = reset_trainer(cfg, change_max_epochs=n_epochs_finetune, callbacks=callbacks, logger=logger)
 
             # NOTE: Swap the models, save the EMA weights from the model being swapped out,
             #       and re-initializes EMA for the new model

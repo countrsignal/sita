@@ -52,6 +52,9 @@ class Molecule:
             self.bond_dict, fully_connected_edges(self.n_atoms)
         )
     
+    def __len__(self):
+        return self.n_atoms
+
     def to_dgl_graph(self) -> DGLGraph:
         edges = fully_connected_edges(self.n_atoms)
         graph = dgl.graph(edges, num_nodes=len(self.atom_dict))
@@ -100,6 +103,35 @@ class Molecule:
             atom_types=atom_one_hot,
             atom_indices=torch.arange(len(atom_dict)),
         )
+
+    def coords_from_pdb(self, pdb_path: str) -> torch.Tensor:
+        """
+        Load 3D atom coordinates from a PDB file.
+
+        Args:
+            pdb_path: path to the PDB file for this molecule
+
+        Returns:
+            Tensor of shape (n_atoms, 3) with coordinates ordered by atom index.
+        """
+        mol = Chem.MolFromPDBFile(pdb_path, removeHs=False, sanitize=False)
+        assert mol is not None, f"Failed to parse PDB file {pdb_path}"
+
+        conf = mol.GetConformer()
+        num_atoms = conf.GetNumAtoms()
+
+        # Ensure coordinate count matches the molecule definition
+        if self.n_atoms != 0:
+            assert num_atoms == self.n_atoms, (
+                f"PDB atom count ({num_atoms}) does not match molecule atom count ({self.n_atoms})"
+            )
+
+        coords = torch.empty((num_atoms, 3), dtype=torch.float32)
+        for idx in range(num_atoms):
+            pos = conf.GetAtomPosition(idx)
+            coords[idx] = torch.tensor([pos.x, pos.y, pos.z], dtype=torch.float32)
+
+        return coords
 
 
 @dataclass

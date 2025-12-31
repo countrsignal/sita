@@ -17,7 +17,7 @@ seed: 12345
 
 task_name: "anneal_adp"
 
-tags: ["Bootstrap", "ADP", "Temperature"]
+tags: ["Bootstrap", "ADP", "Jump-Prior"]
 
 logger:
   wandb:
@@ -40,16 +40,16 @@ optimizer:
 # custom fields 
 #########################
 
-temperature_ladder: [1028, 881, 755, 648, 555, 476, 408, 349, 300]
+temperature_ladder: [755, 555, 408, 300]
 n_epochs_finetune_ebm: 100
-n_epochs_finetune_flow: 100
+n_epochs_finetune_flow: 250
 era_ckpt_dir: ${paths.output_dir}/era_ckpts
 ebm_inspection_interval: 50
 flow_inspection_interval: 50
 ebm_model_ckpt: ${paths.root_dir}/experimental_results/ebm_ema_model_1200K.pth
 flow_model_ckpt: ${paths.root_dir}/experimental_results/pretrain_flow/runs/2025-12-12_23-04-17/ema_model.pth
 initial_flow_samples_path: null #${paths.root_dir}/experimental_results/flow_samples_1200K.npy
-iw_quantile: 0.99
+iw_quantile: 0.98
 
 plans:
   flow_plan:
@@ -57,6 +57,9 @@ plans:
     coupling_plan: "ot"
   ebm_plan:
     _target_: aita.plans.TrigPlanLite
+
+anneal_prior:
+  prior_beta: 0.8
 
 generate_ebm_dataset:
   n_samples: 100_000

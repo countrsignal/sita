@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=AITA_anneal_adp
+#SBATCH --job-name=AITA_anneal_adp_jump_prior
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:1
 #SBATCH --ntasks-per-node=2
@@ -9,7 +9,7 @@
 #SBATCH --mem=100G
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=dap181@pitt.edu
-#SBATCH --output=/net/pulsar/home/koes/dap181/labspace/aita/scripts/logs/aita-anneal-adp.out
+#SBATCH --output=/net/pulsar/home/koes/dap181/labspace/aita/scripts/logs/aita-anneal-adp-jump-prior-00.out
 
 
 ############################
@@ -45,8 +45,8 @@ echo "WANDB_ENTITY='${USERNAME}'" > .env
 ## Launch Training Script ##
 ############################
 echo "Launching training script..."
-python "$PRETRAIN_SCRIPT" experiment=anneal_adp \
-        trainer.max_epochs=500 \
+python "$PRETRAIN_SCRIPT" experiment=anneal_adp_jump_prior \
+        trainer.max_epochs=250 \
         loader.batch_size=512
 
 echo "Training COMPLETE."
