@@ -4,7 +4,7 @@ from torch import Tensor
 
 from tqdm import tqdm
 from dataclasses import dataclass, field
-from typing import Union, Tuple, Optional
+from typing import Union, Tuple, Optional, Callable
 
 from .plans import Plan
 from .data.molecule import Molecule
@@ -219,7 +219,6 @@ class NonequilibriumCandidateMonteCarlo:
         self,
         n_mala_steps: int,
         n_ncmc_steps: int,
-        beta: float = 1.0,
         zeta: float = 1.0,
         t_bounds: Tuple[float, float] = (0.0, 0.5),
         temp_levels: Tuple[float, float] = (755.55, 1200.0),
@@ -228,7 +227,6 @@ class NonequilibriumCandidateMonteCarlo:
 
         self.n_mala_steps = n_mala_steps
         self.n_ncmc_steps = n_ncmc_steps
-        self.beta = beta
         self.zeta = zeta
         self.mala_step_size = mala_step_size
         self.t_low, self.t_high = t_bounds
@@ -238,3 +236,91 @@ class NonequilibriumCandidateMonteCarlo:
     def init_context(self, mol: Molecule, chains: Tensor) -> None:
         self._context = Context(mol, chains)
     
+    def sample_times(self) -> Tensor:
+        return torch.rand((len(self._context),)) * (self.t_high - self.t_low) + self.t_low
+    
+    def run(
+        self,
+        plan: Plan,
+        model: torch.nn.Module,
+        force_field_partial: Callable[[Tensor], Tensor],
+    ) -> None:
+
+        # ensure that the context is initialized
+        assert self._context is not None, "Context must be initialized before running NCMC"
+        
+        # model device
+        device = next(model.parameters()).device
+        
+        # system variables
+        dt = 1 / self.n_ncmc_steps
+        beta = self.temp_high / self.temp_low
+        n_atoms = self._context.mol.n_atoms
+        n_chains = len(self._context)
+
+        # create a graph with the given categorical features
+        graphs = self._context.mol.inference_graph_setup(len(self._context))
+
+        # initialize force fields at the two temperature levels
+        force_field_high = force_field_partial(temperature=self.temp_high)
+        force_field_low = force_field_partial(temperature=self.temp_low)
+
+        # being loop
+        graphs = graphs.to(device)
+        self._context.dispatch(device)
+        log.info(f"Running NCMC from {self.temp_high}K to {self.temp_low}K ...")
+        while torch.all(~self._context.states):
+
+            # NOTE: chains with state that are set to FALSE are at the high temperature
+            #       and chains with state that are set to TRUE are at the low temperature
+
+            #########################################################################################################################
+            # HIGH TEMPERATURE MALA
+            #########################################################################################################################
+            if torch.any(~self._context.states):
+                # run local MALA steps at the high temperature
+                # > find the high temperature chains and run MALA steps
+                hot_chains = self._context.chains[~self._context.states]
+                for _ in tqdm(range(self.n_mala_steps), desc=f"High Temperature ({self.temp_high}K) MALA Steps"):
+                    hot_chains = mala_transition_kernel_step(
+                        step_size=self.mala_step_size,
+                        x=hot_chains,
+                        force_field=force_field_high,
+                    )
+                self._context.update_chains(~self._context.states, hot_chains)
+            
+            #########################################################################################################################
+            # Non-Equilibrium Switches
+            #########################################################################################################################
+
+            # (1) Sample the protocol times
+            protocol_times = self.sample_times()
+            # protocol_times: (n_chains, )
+
+            # (2) Sample the protocol noise
+            n_hot_chains = hot_chains.size(0)
+            z = torch.randn((n_hot_chains * n_atoms, 3), device=device)
+            z = scatter_center_mol(z, graphs).view(n_hot_chains, n_atoms * 3)
+            # z: (n_chains, n_atoms * 3)
+
+            # (3) draw x(t)
+            alpha_t = plan.alpha_t(protocol_times).view(-1, 1)
+            sigma_t = plan.sigma_t(protocol_times).view(-1, 1)
+            x_t = alpha_t * hot_chains + sigma_t * z
+            # x_t: (n_chains, n_atoms * 3)
+
+
+            #########################################################################################################################
+            # LOW TEMPERATURE MALA
+            #########################################################################################################################
+            if torch.any(self._context.states):
+                # run local MALA steps at the low temperature
+                # > find the low temperature chains and run MALA steps
+                low_temperature_chains = self._context.chains[self._context.states]
+                for _ in tqdm(range(self.n_mala_steps), desc=f"Low Temperature ({self.temp_low}K) MALA Steps"):
+                    low_temperature_chains = mala_transition_kernel_step(
+                        step_size=self.mala_step_size,
+                        x=low_temperature_chains,
+                        force_field=force_field_low,
+                    )
+                self._context.update_chains(self._context.states, low_temperature_chains)
