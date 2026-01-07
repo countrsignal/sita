@@ -41,7 +41,7 @@ optimizer:
 #########################
 
 temperature_ladder: [755, 555, 408, 300]
-n_epochs_finetune_ebm: 100
+n_epochs_finetune_ebm: 250
 n_epochs_finetune_flow: 250
 era_ckpt_dir: ${paths.output_dir}/era_ckpts
 ebm_inspection_interval: 50
