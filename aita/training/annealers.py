@@ -226,7 +226,7 @@ class AnnealerADP(LightningModule):
             # move flow model to GPU device
             self.flow = self.flow.to(self.device)
             self.flow.eval();
-            
+         
             if self._temperature_index == 0:
                 temp = 1200
                 log.log(20, "Generating data from the pre-trained flow model at 1200 Kelvin ...")
@@ -339,25 +339,6 @@ class AnnealerADP(LightningModule):
             log.log(20, "Calculating log weights...")
             log_w = calc_log_w(energies=energies, log_probs=log_probs)
             log.log(20, "Log weights computed.")
-
-            #########################################################################################################################
-            # # search for optimal quantile clipping threshold
-            # log.log(20, "Searching for optimal quantile clipping threshold...")
-            # quantiles = torch.linspace(0.9, 1.0, 11)[:-1]
-            # effective_sample_sizes = []
-            # for quantile in quantiles:
-            #     trial_log_w = log_w[quantile_clip(log_w=log_w, quantile=quantile)]
-            #     trial_log_w_normalized = normalize_log_w(log_w=trial_log_w)
-            #     effective_sample_sizes.append(calc_ess(log_w_normalized=trial_log_w_normalized))
-            # effective_sample_sizes = torch.tensor(effective_sample_sizes)
-
-            # # DEBUG
-            # log.debug(f"<!>Effective sample sizes: {effective_sample_sizes}")
-
-            # optimal_quantile = quantiles[effective_sample_sizes.argmax()]
-            # ness = (effective_sample_sizes.max() / len(self.dataset))
-            # log.log(20, f"Optimal quantile clipping threshold: {optimal_quantile.item()} with ESS: {ness:.4f}")
-            #########################################################################################################################
 
             # clip log weights using optimal quantile
             samples = torch.cat(self.dataset.cache, dim=0)

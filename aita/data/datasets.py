@@ -72,7 +72,7 @@ class SimulationDataset(Dataset):
             prev_num_samples = len(samples)
             # find DCD file and PDB file
             dcd_file = list(data_dir.glob(f"{molecule}_{self.param}*.dcd"))[0]
-            
+
             ############################################
             if self.debug_molecule is not None:
                 log.log(20, f"Loading DCD file: {dcd_file}")

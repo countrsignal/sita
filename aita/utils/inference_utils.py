@@ -67,10 +67,25 @@ def calc_ess(log_w_normalized: torch.Tensor) -> float:
     return ess
 
 @torch.no_grad()
-def importance_weighted_resample(samples: torch.Tensor, log_w_normalized: torch.Tensor) -> torch.Tensor:
-    """Importance Resampling using multinomial sampling"""
+def importance_weighted_resample(n_samples: int, samples: torch.Tensor, log_w_normalized: torch.Tensor) -> torch.Tensor:
+    """Importance Resampling using multinomial sampling.
+
+    Args:
+        n_samples: int
+            Number of samples to resample.
+        samples: torch.Tensor
+            Samples to resample.
+        log_w_normalized: torch.Tensor
+            Normalized log weights.
+
+    Returns:
+        samples: torch.Tensor
+            Resampled samples.
+        indices: torch.Tensor
+            Indices of the resampled samples.
+    """
     weights = torch.exp(log_w_normalized)
-    indices = torch.multinomial(weights, samples.shape[0], replacement=True)
+    indices = torch.multinomial(weights, n_samples, replacement=True)
     return samples[indices], indices
 
 

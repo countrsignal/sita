@@ -142,7 +142,12 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
             # Reset the trainer
             del(trainer)
             n_epochs_finetune = cfg.get("n_epochs_finetune_ebm") if current_era == "ebm" else cfg.get("n_epochs_finetune_flow")
-            trainer = reset_trainer(cfg, change_max_epochs=n_epochs_finetune, callbacks=callbacks, logger=logger)
+            trainer = reset_trainer(
+                cfg,
+                change_max_epochs=n_epochs_finetune[model._temperature_index],
+                callbacks=callbacks,
+                logger=logger,
+            )
 
             # NOTE: Swap the models, save the EMA weights from the model being swapped out,
             #       and re-initializes EMA for the new model

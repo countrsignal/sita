@@ -4,7 +4,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --ntasks-per-node=2
 #SBATCH --exclude=g016,g017,g018
-#SBATCH --time=12-0:00:00
+#SBATCH --time=2-0:00:00
 #SBATCH --partition=koes_gpu
 #SBATCH --mem=100G
 #SBATCH --mail-type=ALL
@@ -45,7 +45,7 @@ echo "WANDB_ENTITY='${USERNAME}'" > .env
 ## Launch Training Script ##
 ############################
 echo "Launching training script..."
-python "$PRETRAIN_SCRIPT" experiment=pretrain_tempered_flow_adp_temp trainer.max_epochs=500 loader.batch_size=512
+python "$PRETRAIN_SCRIPT" experiment=pretrain_flow_adp_temp trainer.max_epochs=100 loader.batch_size=512
 
 echo "Training COMPLETE."
 exit 0
