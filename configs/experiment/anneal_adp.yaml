@@ -46,8 +46,13 @@ n_epochs_finetune_flow: 100
 era_ckpt_dir: ${paths.output_dir}/era_ckpts
 ebm_inspection_interval: 50
 flow_inspection_interval: 50
-ebm_model_ckpt: ${paths.root_dir}/experimental_results/ebm_ema_model_1200K.pth
-flow_model_ckpt: ${paths.root_dir}/experimental_results/pretrain_flow/runs/2025-12-12_23-04-17/ema_model.pth
+
+# ${paths.root_dir}/experimental_results/ebm_ema_model_1200K.pth
+ebm_model_ckpt: ${paths.root_dir}/experimental_results/pretrain_ebm/runs/2026-01-20_19-18-12/ema_model.pth
+
+# ${paths.root_dir}/experimental_results/pretrain_flow/runs/2025-12-12_23-04-17/ema_model.pth
+flow_model_ckpt:  ${paths.root_dir}/experimental_results/pretrain_flow/runs/2026-01-15_18-54-05/ema_model.pth
+
 initial_flow_samples_path: null #${paths.root_dir}/experimental_results/flow_samples_1200K.npy
 iw_quantile: 0.99
 

@@ -1,15 +1,15 @@
 #!/bin/bash
-#SBATCH --job-name=AITA_pretrain_tempered_flow_adp
+#SBATCH --job-name=AITA_pretrain_flow_adp
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:1
 #SBATCH --ntasks-per-node=2
 #SBATCH --exclude=g016,g017,g018
-#SBATCH --time=2-0:00:00
+#SBATCH --time=3-0:00:00
 #SBATCH --partition=koes_gpu
 #SBATCH --mem=100G
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=dap181@pitt.edu
-#SBATCH --output=/net/pulsar/home/koes/dap181/labspace/aita/scripts/logs/aita-pretrain-tempered-flow-adp.out
+#SBATCH --output=/net/pulsar/home/koes/dap181/labspace/aita/scripts/logs/aita-pretrain-flow-adp-500epochs.out
 
 
 ############################
@@ -45,7 +45,7 @@ echo "WANDB_ENTITY='${USERNAME}'" > .env
 ## Launch Training Script ##
 ############################
 echo "Launching training script..."
-python "$PRETRAIN_SCRIPT" experiment=pretrain_flow_adp_temp trainer.max_epochs=100 loader.batch_size=512
+python "$PRETRAIN_SCRIPT" experiment=pretrain_flow_adp_temp trainer.max_epochs=500 loader.batch_size=512
 
 echo "Training COMPLETE."
 exit 0

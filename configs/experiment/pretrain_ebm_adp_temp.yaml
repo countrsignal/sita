@@ -17,7 +17,7 @@ seed: 12345
 
 task_name: "pretrain_ebm"
 
-tags: ["Fit", "EBM", "ADP", "Temperature", "TSR"]
+tags: ["Fit", "EBM", "ADP", "Temperature", "PITA"]
 
 logger:
   wandb:
@@ -48,19 +48,17 @@ plans:
   ebm_plan:
     _target_: aita.plans.TrigPlanLite
 
-ebm_ckpt: ${paths.root_dir}/experimental_results/anneal_adp/runs/2025-12-15_23-53-11/era_ckpts/ebm_ema_model_1200K.pth
-flow_model_ckpt: null # ${paths.root_dir}/experimental_results/pretrain_flow/runs/2025-11-17_12-59-00/ema_model.pth
-flow_samples_path: ${paths.root_dir}/experimental_results/tsr_samples.npy
+ebm_ckpt: null # ${paths.root_dir}/experimental_results/anneal_adp/runs/2025-12-15_23-53-11/era_ckpts/ebm_ema_model_1200K.pth
+flow_model_ckpt: ${paths.root_dir}/experimental_results/pretrain_flow/runs/2026-01-18_14-56-35/ema_model.pth # ${paths.root_dir}/experimental_results/pretrain_flow/runs/2025-11-17_12-59-00/ema_model.pth
+flow_samples_path: null
 
-ebm_inspection_interval: 25
+ebm_inspection_interval: 50
 
 sample_from_flow:
   output_path: ${paths.output_dir}/alanine_dipeptide_samples.npy
   pdb_path: ${paths.data_dir}/debug/alanine_dipeptide.pdb
-  n_samples: 100_000
+  n_samples: 200_000
   samples_per_batch: 5_000
   n_timesteps: 100
   method: "dopri5"
-  tsr_params:
-    k: ${div:1200,648}
-    rho: 1.0
+  tsr_params: null

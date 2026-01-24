@@ -119,12 +119,6 @@ class PreTrainerEBM(LightningModule):
             flow_model = hydra.utils.instantiate(self.hparams.flow)
             flow_model = flow_model.load_from_checkpoint(self.hparams.flow_model_ckpt, weights_only=True, map_location="cpu")
             
-            # compile model for faster inference
-            flow_model.edge_embedding = torch.compile(flow_model.edge_embedding)
-            for idx in range(flow_model.gvp_decoder.n_layers):
-                flow_model.gvp_decoder.edge_updater[idx] = torch.compile(flow_model.gvp_decoder.edge_updater[idx])
-            flow_model.gvp_decoder.position_updater = torch.compile(flow_model.gvp_decoder.position_updater)
-            
             # move to device
             flow_model = flow_model.to(self.device)
             flow_model.eval()

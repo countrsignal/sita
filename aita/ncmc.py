@@ -74,17 +74,17 @@ def mala_transition_kernel_step(
 
 
 def transition_log_prob(
-    x_next: Tensor,
+    x: Tensor,
     mean_x: Tensor,
     variance: Tensor,
     n_particles: int,
 ):
-    quad = -0.5 * torch.square(x_next - mean_x).sum(dim=-1) / variance
+    quad = -0.5 * torch.square(x - mean_x).sum(dim=-1) / variance
     norm = -0.5 * 3 * (n_particles - 1) * torch.log(2 * torch.pi * variance)
     return quad + norm
 
 
-def ncmc_transition_kernel_step(
+def generative_transition_kernel_step(
     dt: float,
     t: Tensor,
     x: Tensor,
@@ -156,7 +156,106 @@ def ncmc_transition_kernel_step(
     # fwd_log_prob: (batch_size, )
     # bwd_log_prob: (batch_size, )
 
-    return x_next, bwd_log_prob - fwd_log_prob
+    return x_next, fwd_log_prob, bwd_log_prob
+
+
+def noising_transition_kernel_step(
+    dt: float,
+    t: Tensor,
+    x: Tensor,
+    g: dgl.DGLGraph,
+    plan: Plan,
+    model: torch.nn.Module,
+    beta: float = 1.0,
+    zeta: float = 1.0,
+) -> Tuple[Tensor, Tensor]:
+
+    assert zeta > 0.0, "zeta must be strictly positive or else numerical instability will occur"
+
+    # > expand time variable to match the number of nodes for each molecule in the batch
+    # NOTE: Expected that all molecules in the batch have the same number of atoms (i.e. same molecule for all graphs in the batch)
+    # NOTE: it is expected that (t) has shape (batch_size, )
+    n_particles = g.num_nodes() // g.batch_size
+    t_per_node = t.repeat_interleave(n_particles) # [batch_size * n_particles, ]
+
+    ###############################################
+    # Noising process direction
+    ###############################################
+    # > compute velocity
+    g.ndata["xt"] = x.view(g.num_nodes(), 3) # [batch_size * n_particles, 3]
+    g.ndata["t"] = t_per_node.view(-1, 1) # [batch_size * n_particles, 1]
+    velocity = model(g)
+    # velocity: (batch_size * n_particles, 3)
+    # x: (batch_size, n_particles * 3)
+    # t: (batch_size * n_particles, )
+
+    # > compute score
+    velocity = velocity.view(g.batch_size, n_particles * 3)
+    score = plan.get_score_from_velocity(t_per_node, x, velocity)
+    # velocity: (batch_size, n_particles * 3)
+    # score: (batch_size, n_particles * 3)
+
+    # > compute coefficients
+    eta = beta + (1 - beta) * zeta
+    diffusion_coeff = plan.sigma_t(t_per_node).view(-1, 1) ** 2
+    xi = diffusion_coeff * (beta + (1 - beta) * 2.0 * zeta) / beta
+    # diffusion_coeff: (batch_size, 1)
+    # eta: (batch_size, 1)
+    # xi: (batch_size, 1)
+
+    # > brownian motion
+    w_cur = torch.randn_like(x).view(g.num_nodes(), 3)
+    w_cur = scatter_center_mol(w_cur, g) # NOTE: center noise at origin removes a degree of freedom!
+    dw = w_cur * (dt ** 0.5)
+    dw = dw.view(x.shape)
+    # dw: (batch_size, n_particles * 3)
+
+    # > compute backward mean
+    bwd_drift  = velocity - 0.5 * eta * diffusion_coeff * score
+    bwd_mean_x = x + bwd_drift * dt
+    # bwd_mean_x: (batch_size, n_particles * 3)
+
+    ###############################################
+    # Proposal step
+    ###############################################
+    # > update x
+    x_prev = bwd_mean_x + torch.sqrt(xi) * dw
+    # x_prev: (batch_size, n_particles * 3)
+
+    ###############################################
+    # Generative process direction
+    ###############################################
+    # > compute velocity
+    g.ndata["xt"] = x_prev.view(g.num_nodes(), 3) # [batch_size * n_particles, 3]
+    velocity = model(g)
+    # velocity: (batch_size * n_particles, 3)
+    # x_prev: (batch_size, n_particles * 3)
+
+    # > compute score
+    velocity = velocity.view(g.batch_size, n_particles * 3)
+    score = plan.get_score_from_velocity(t_per_node, x_prev, velocity)
+    # velocity: (batch_size, n_particles * 3)
+    # score: (batch_size, n_particles * 3)
+
+    # > compute forward mean
+    fwd_drift  = velocity + 0.5 * eta * diffusion_coeff * score
+    fwd_mean_x = x_prev + fwd_drift * dt
+    # fwd_mean_x: (batch_size, n_particles * 3)
+
+    ###############################################
+    # Log Probabilities
+    ###############################################
+    # > compute variance
+    variance = (xi * dt).squeeze(-1)
+    # variance: (batch_size, )
+
+    # > log probability (centroid-centered noise)
+    fwd_log_prob = transition_log_prob(x, fwd_mean_x, variance, n_particles)
+    bwd_log_prob = transition_log_prob(x_prev, bwd_mean_x, variance, n_particles)
+    # fwd_log_prob: (batch_size, )
+    # bwd_log_prob: (batch_size, )
+
+    return x_prev, fwd_log_prob, bwd_log_prob
 
 
 def accept_reject(log_alpha: Tensor) -> Tuple[Tensor, Optional[Tensor]]:

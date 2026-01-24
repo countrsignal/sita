@@ -9,7 +9,7 @@
 #SBATCH --mem=100G
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=dap181@pitt.edu
-#SBATCH --output=/net/pulsar/home/koes/dap181/labspace/aita/scripts/logs/aita-pretrain-ebm.out
+#SBATCH --output=/net/pulsar/home/koes/dap181/labspace/aita/scripts/logs/aita-pretrain-ebm-pita.out
 
 
 ############################
@@ -45,7 +45,7 @@ echo "WANDB_ENTITY='${USERNAME}'" > .env
 ## Launch Training Script ##
 ############################
 echo "Launching training script..."
-python "$PRETRAIN_SCRIPT" experiment=pretrain_ebm_adp_temp trainer.max_epochs=200
+python "$PRETRAIN_SCRIPT" experiment=pretrain_ebm_adp_temp trainer.max_epochs=500
 
 echo "Training COMPLETE."
 exit 0

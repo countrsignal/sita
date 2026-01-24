@@ -163,17 +163,12 @@ class AnnealerADP(LightningModule):
     def training_model_swap(self, era: str) -> None:
         """Swap which model is being trained. Also re-initializes EMA if using."""
 
-        assert self.training_era != era, f"Next era cannot be the same as the current era."
-
         if era == "ebm":
             # train EBM
             self.ebm.train();
             self.flow.eval();
             # re-initialize EMA if using
             if self.ema is not None:
-                # > save Flow EMA model weights from previous era
-                temp = self._temperature_ladder[self._temperature_index]
-                torch.save(self.ema.ema_model.state_dict(), os.path.join(self.hparams.era_ckpt_dir, f"flow_ema_model_{temp}K.pth"))
                 # > re-initialize EMA
                 self.ema = hydra.utils.instantiate(self.hparams.ema, model=self.ebm)
         else:
@@ -182,17 +177,17 @@ class AnnealerADP(LightningModule):
             self.flow.train();
             # re-initialize EMA if using
             if self.ema is not None:
-                # > save EBM ema model weights from previous era
-                if self._temperature_index == 0:
-                    temp = 1200
-                else:
-                    temp = self._temperature_ladder[self._temperature_index - 1]
-                torch.save(self.ema.ema_model.state_dict(), os.path.join(self.hparams.era_ckpt_dir, f"ebm_ema_model_{temp}K.pth"))
                 # > re-initialize EMA
                 self.ema = hydra.utils.instantiate(self.hparams.ema, model=self.flow)
         
         self.training_era = era
-    
+
+    def save_ema_model(self, era: str) -> None:
+        curr_temp = self._temperature_ladder[self._temperature_index]
+        filename = f"{era}_ema_model_{int(curr_temp)}K.pth"
+        torch.save(self.ema.ema_model.state_dict(), os.path.join(self.hparams.era_ckpt_dir, filename))
+        log.log(20, f"Saved EMA model weights to {filename}")
+
     def train_dataloader(self):
         return self.dataset.get_train_dataloader(self.hparams.loader.batch_size, self.hparams.loader.num_workers, self.hparams.loader.pin_memory)
 
@@ -219,6 +214,9 @@ class AnnealerADP(LightningModule):
             if not self.ema.allow_different_devices:
                 self.ema.to(self.device)
 
+        # Check if we are annealing the prior to perfrom large temperature jumps at inference time
+        jumping = self.hparams.get("anneal_prior", False)
+
         ################################################################################
         # EBM Training Era
         ################################################################################
@@ -226,22 +224,25 @@ class AnnealerADP(LightningModule):
             # move flow model to GPU device
             self.flow = self.flow.to(self.device)
             self.flow.eval();
-         
-            if self._temperature_index == 0:
+
+            # Check if we anneal the prior
+            if jumping:
+                assert isinstance(self.flow, VFT) is False, "Prior annealing is only supported for non-tempered flow models"
+                prior_beta = self.hparams.anneal_prior.prior_beta[self._temperature_index]
+                log.log(20, f"<<!>> Scaling prior st. dev. to {prior_beta} for annealing...")
+            else:
+                prior_beta = 1.0
+
+            # Determine the temperature at which to generate data
+            if (self._temperature_index == 0) and (not jumping):
+                # NOTE: we only generate data at 1200K on the first step if we are not annealing the prior
                 temp = 1200
                 log.log(20, "Generating data from the pre-trained flow model at 1200 Kelvin ...")
             else:
                 temp = self._temperature_ladder[self._temperature_index]
                 log.log(20, f"Generating annealed data from the flow model at {temp} Kelvin ...")
 
-            # Check if we anneal the prior
-            if self.hparams.get("anneal_prior", False):
-                assert isinstance(self.flow, VFT) is False, "Prior annealing is only supported for non-tempered flow models"
-                prior_beta = self.hparams.anneal_prior.prior_beta
-            else:
-                prior_beta = 1.0
-
-            # generate data from the flow model
+            # Generate data from the flow model
             mol = self.dataset.molecules[self.dataset.pdb_id]
             res_dict = Pipeline.generate_from_flow(
                 n_samples=self.hparams.generate_ebm_dataset.n_samples,
@@ -296,11 +297,17 @@ class AnnealerADP(LightningModule):
 
             if self._temperature_index == 0:
                 curr_temp = self._temperature_ladder[self._temperature_index]
-                log.log(20, f"Annealing from 1200K -> {curr_temp}K ...")
+                if jumping:
+                    log.log(20, f"Re-weighting and re-sampling to {curr_temp}K ...")
+                else:
+                    log.log(20, f"Re-weighting and re-sampling from 1200K -> {curr_temp}K ...")
             else:
                 prev_temp = self._temperature_ladder[self._temperature_index - 1]
                 curr_temp = self._temperature_ladder[self._temperature_index]
-                log.log(20, f"Annealing from {prev_temp}K -> {curr_temp}K ...")
+                if jumping:
+                    log.log(20, f"Re-weighting and re-sampling to {curr_temp}K ...")
+                else:
+                    log.log(20, f"Re-weighting and re-sampling from {prev_temp}K -> {curr_temp}K ...")
 
             # Instantiate full forcefield at current temperature
             forcefield = self.forcefield_partial(temperature=curr_temp)
@@ -311,7 +318,7 @@ class AnnealerADP(LightningModule):
             mol = self.dataset.molecules[self.dataset.pdb_id]
             dof = mol.n_atoms * 3
             dcd_dir  = self.dataset.data_path / "mds" / "temperature"
-            dcd_path = list(dcd_dir.glob(f"{mol.name}_{curr_temp}K*.dcd"))[0]
+            dcd_path = list(dcd_dir.glob(f"{mol.name}_{int(curr_temp)}K*.dcd"))[0]
 
             # DEBUG
             log.debug(f"<!>DCD path: {dcd_path}")
@@ -367,7 +374,11 @@ class AnnealerADP(LightningModule):
             )
 
             # Importance weighted resampling
-            samples, _ = importance_weighted_resample(samples, normalized_log_w) # NOTE: weights are exponentiated inside the function
+            samples, _ = importance_weighted_resample(
+                n_samples=self.hparams.n_iw_samples if self.hparams.get("n_iw_samples", None) else samples.size(0),
+                samples=samples,
+                log_w_normalized=normalized_log_w,
+            ) # NOTE: weights are exponentiated inside the function
 
             # > save samples to numpy file for debugging
             np.save(

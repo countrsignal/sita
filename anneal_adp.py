@@ -111,23 +111,16 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         # create directory for era checkpoints
         os.makedirs(cfg.era_ckpt_dir, exist_ok=True)
 
-        # pre-train the EBM at samples from 1200K
-        if cfg.get("ebm_model_ckpt", None) is None:
-            log.log(20, "Pre-training the EBM at samples from 1200K!")
-            trainer.fit(model=model, ckpt_path=cfg.get("ckpt_path"))
-            torch.cuda.empty_cache()
-            log.log(20, "EBM pre-training phase complete!")
-        else:
-            log.log(20, "Loading pre-trained EBM model...")
-            model.ebm = model.ebm.load_from_checkpoint(cfg.ebm_model_ckpt, weights_only=True, map_location="cpu")
-            log.log(20, "Pre-trained EBM model loaded!")
+        # load pre-trained EBM model
+        log.log(20, "Loading pre-trained EBM model...")
+        model.ebm = model.ebm.load_from_checkpoint(cfg.ebm_model_ckpt, weights_only=True, map_location="cpu")
+        log.log(20, "Pre-trained EBM model loaded!")
 
-            # NOTE: we must populate the dataset with samples from the pre-trained flow model
-            log.log(20, "Populating the dataset with samples from the pre-trained flow model...")
-            model = model.cuda()
-            model.on_fit_start() # NOTE: this is safe as the training_era is set to "ebm" at initialization
-            log.log(20, "Dataset populated with samples from the pre-trained flow model!")
-
+        # NOTE: we must populate the dataset with samples from the pre-trained flow model
+        log.log(20, "Populating the dataset with samples from the pre-trained flow model...")
+        model = model.cuda()
+        model.on_fit_start() # NOTE: this is safe as the training_era is set to "ebm" at initialization
+        log.log(20, "Dataset populated with samples from the pre-trained flow model!")
 
         # Annealing process
         log.log(20, "Starting the annealing process!")
@@ -159,13 +152,16 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
             trainer.fit(model=model, ckpt_path=None)
             torch.cuda.empty_cache()
 
+            # save EMA model weights
+            model.save_ema_model(current_era)
+
             # increment temperature index for the next era
-            if current_era == "ebm":
+            if (i % 2 == 0):
                 model.anneal_step()
     
         # NOTE: we save the very last EBM EMA model as there is no swap after the last era
         log.log(20, "Saving the very last EBM EMA model...")
-        torch.save(model.ema.ema_model.state_dict(), os.path.join(cfg.era_ckpt_dir, f"ebm_ema_model_{current_temperature}K.pth"))
+        torch.save(model.ema.ema_model.state_dict(), os.path.join(cfg.era_ckpt_dir, f"ebm_last_ema_model_{current_temperature}K.pth"))
         log.log(20, "Annealing process complete!")
 
     return None
