@@ -225,14 +225,6 @@ class AnnealerADP(LightningModule):
             self.flow = self.flow.to(self.device)
             self.flow.eval();
 
-            # Check if we anneal the prior
-            if jumping:
-                assert isinstance(self.flow, VFT) is False, "Prior annealing is only supported for non-tempered flow models"
-                prior_beta = self.hparams.anneal_prior.prior_beta[self._temperature_index]
-                log.log(20, f"<<!>> Scaling prior st. dev. to {prior_beta} for annealing...")
-            else:
-                prior_beta = 1.0
-
             # Determine the temperature at which to generate data
             if (self._temperature_index == 0) and (not jumping):
                 # NOTE: we only generate data at 1200K on the first step if we are not annealing the prior
@@ -241,6 +233,15 @@ class AnnealerADP(LightningModule):
             else:
                 temp = self._temperature_ladder[self._temperature_index]
                 log.log(20, f"Generating annealed data from the flow model at {temp} Kelvin ...")
+
+            # Check if we anneal the prior
+            if jumping:
+                assert isinstance(self.flow, VFT) is False, "Prior annealing is only supported for non-tempered flow models"
+                prev_temp = self._temperature_ladder[self._temperature_index - 1] if self._temperature_index > 0 else 1200.00
+                prior_beta = (temp / prev_temp) ** 0.5
+                log.log(20, f"<<!>> Scaling prior st. dev. to {prior_beta} for annealing...")
+            else:
+                prior_beta = 1.0
 
             # Generate data from the flow model
             mol = self.dataset.molecules[self.dataset.pdb_id]

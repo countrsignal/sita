@@ -1,10 +1,12 @@
 import dgl
 import torch
 from torch import Tensor
+from torch.distributions import constraints
 
+import math
 from tqdm import tqdm
 from dataclasses import dataclass, field
-from typing import Union, Tuple, Optional, Callable
+from typing import Dict, Union, Tuple, Optional, Callable
 
 from .plans import Plan
 from .data.molecule import Molecule
@@ -12,7 +14,6 @@ from .utils.logging import RankedLogger
 from .utils.graph_utils import scatter_center_mol
 from .utils.data_utils import angstrom_to_nm, nm_to_angstrom
 from .energies.base_molecule_energy_function import BaseMoleculeEnergy
-from aita.data import molecule
 
 
 log = RankedLogger(__name__, on_rank_zero=True)
@@ -22,261 +23,381 @@ log = RankedLogger(__name__, on_rank_zero=True)
 # functions
 ###################################
 
-def mala_transition_kernel_step(
-    step_size: float,
-    x: Tensor,
-    force_field: BaseMoleculeEnergy,
-):
-    # (a) Compute ∇ log π(x)
-    log_prob_x, forces_x = force_field(x, return_force=True)
-    # log_prob_x: (batch_size, n_particles * 3)
-    # forces_x: (batch_size, n_particles * 3)
-
-    # (b) Propose x' = x + (δ/2) * force  +  sqrt(δ) * ξ
-    mean_fwd = x + 0.5 * step_size * forces_x
-
-    # (c) Compute ξ ~ N(0, I)
-    noise = torch.randn_like(x)
-    # noise: (batch_size, n_particles * 3)
-
-    # > remove center of mass from noise
-    # NOTE: centered-noise constants cancel between forward/backward log ratios
-    noise = noise.view(-1, force_field.n_particles, 3)
-    noise = noise - noise.mean(dim=1, keepdim=True)
-    noise = noise.view(-1, force_field.n_particles * 3)
-
-    # (d) Compute forward proposal q(x' | x)
-    proposal_x = mean_fwd + torch.sqrt(step_size) * noise
-    log_q_fwd  = - 0.5 * torch.square(proposal_x - mean_fwd).sum(dim=-1) / step_size
-    # proposal_x: (batch_size, n_particles * 3)
-    # log_q_fwd: (batch_size, )
-
-    # (e) Backward proposal q(x | x')
-    log_prob_xp, forces_xp = force_field(proposal_x, return_force=True)
-    mean_bwd  = proposal_x + 0.5 * step_size * forces_xp
-    log_q_bwd = - 0.5 * torch.square(x.detach() - mean_bwd).sum(dim=-1) / step_size
-    # log_q_bwd: (batch_size, )
-
-    # (f) Compute acceptance probability
-    log_alpha = log_prob_xp + log_q_bwd - log_prob_x - log_q_fwd
-    log_alpha = log_alpha.clamp(max=0.0) # ensure α ≤ 1
-    alpha     = torch.exp(log_alpha)
-    alpha     = torch.nan_to_num(alpha, nan=0.0, posinf=0.0, neginf=0.0)
-
-    u = torch.rand_like(alpha)                 # uniform [0,1] per batch‐element
-    accept_mask = (u < alpha)                  # boolean mask [batch]
-
-    # update x: if accepted, take x_proposed, else keep x
-    x = torch.where(accept_mask.unsqueeze(-1), proposal_x, x)
-    # x: (batch_size, n_particles * 3)
-
-    return x
-
-
 def transition_log_prob(
-    x: Tensor,
+    x_next: Tensor,
     mean_x: Tensor,
     variance: Tensor,
     n_particles: int,
 ):
-    quad = -0.5 * torch.square(x - mean_x).sum(dim=-1) / variance
+    quad = -0.5 * torch.square(x_next - mean_x).sum(dim=-1) / variance
     norm = -0.5 * 3 * (n_particles - 1) * torch.log(2 * torch.pi * variance)
     return quad + norm
 
 
-def generative_transition_kernel_step(
+@torch.no_grad()
+def simulate_ou_forward_reverse(
+    z_init: torch.Tensor,
+    n_steps: int,
     dt: float,
-    t: Tensor,
-    x: Tensor,
-    g: dgl.DGLGraph,
+    cold_prior: torch.distributions.Distribution,
+    device: str = "cpu",
+):
+    """
+    Simulate forward OU process from N(0, I) toward N(0, σ²I),
+    accumulating forward and reverse path log-probabilities.
+
+    Path measures:
+        log_p_fwd = log p_0(z_0) + Σ log p(z_{n+1} | z_n)
+        log_p_bwd = log π(z_T)  + Σ log p(z_n | z_{n+1})
+
+    where π is the cold prior (target).
+
+    Returns:
+        z_T:       [n_samples, dim]
+        log_p_fwd: [n_samples]
+        log_p_bwd: [n_samples]
+    """
+    sigma2 = cold_prior.scale ** 2
+    alpha = math.exp(-dt / sigma2)
+    tau2 = sigma2 * (1.0 - alpha ** 2)
+    dof = (cold_prior.n_particles - 1) * cold_prior.spatial_dim
+    dim = cold_prior.dim
+    n_samples = z_init.size(0)
+
+    # ---- Enforce z_0 ~ N(0, I) on mean-free subspace ----
+    z = cold_prior.mean_free(z_init)
+
+    # log p_0(z_0): mean-free Gaussian, unit variance, dof dimensions
+    log_p_fwd = -0.5 * dof * math.log(2 * math.pi) - 0.5 * z.pow(2).sum(-1)
+    log_p_bwd = torch.zeros(n_samples, device=device)
+
+    alpha_n = 1.0  # tracks α^n = e^{-n Δt / σ²}
+
+    for _ in range(n_steps):
+        v_n = alpha_n ** 2 * (1.0 - sigma2) + sigma2
+
+        # --- Forward step (exact OU transition) ---
+        eps = torch.randn_like(z)
+        eps = cold_prior.mean_free(eps)
+        z_new = alpha * z + math.sqrt(tau2) * eps
+        z_new = cold_prior.mean_free(z_new)
+
+        # Update schedule
+        alpha_n *= alpha
+        v_n1 = alpha_n ** 2 * (1.0 - sigma2) + sigma2
+
+        # --- Accumulate forward log p(z_{n+1} | z_n) ---
+        res_fwd = z_new - alpha * z
+        log_p_fwd += (
+            -0.5 * dof * math.log(2 * math.pi * tau2)
+            - 0.5 * res_fwd.pow(2).sum(-1) / tau2
+        )
+
+        # --- Accumulate reverse log p(z_n | z_{n+1}) ---
+        rev_var = tau2 * v_n / v_n1
+        rev_coeff = alpha * v_n / v_n1
+        res_bwd = z - rev_coeff * z_new
+        log_p_bwd += (
+            -0.5 * dof * math.log(2 * math.pi * rev_var)
+            - 0.5 * res_bwd.pow(2).sum(-1) / rev_var
+        )
+
+        z = z_new
+
+    # ---- Terminal: log π(z_T) under cold prior ----
+    log_p_bwd += cold_prior.log_prob(z)
+
+    return z, log_p_fwd, log_p_bwd
+
+
+@torch.no_grad()
+def jarzynski_integrate_heun(
+    x_init: torch.Tensor,
+    times: torch.Tensor,
+    graph: dgl.DGLGraph,
+    vector_field: torch.nn.Module,
     plan: Plan,
-    model: torch.nn.Module,
+    simulate_generative: bool = True,
     beta: float = 1.0,
     zeta: float = 1.0,
-) -> Tuple[Tensor, Tensor]:
+):
+    """
+    Jarzynski integrator with Heun predictor-corrector, trapezoidal backward
+    mean, and midpoint variance for tighter forward/backward log-probability
+    agreement and improved NCMC acceptance rates.
 
-    assert zeta > 0.0, "zeta must be strictly positive or else numerical instability will occur"
+    Three improvements over the basic EM integrator (``jarzynski_integrate``):
 
-    # > expand time variable to match the number of nodes for each molecule in the batch
-    # NOTE: Expected that all molecules in the batch have the same number of atoms (i.e. same molecule for all graphs in the batch)
-    # NOTE: it is expected that (t) has shape (batch_size, )
-    n_particles = g.num_nodes() // g.batch_size
-    t_per_node = t.repeat_interleave(n_particles) # [batch_size * n_particles, ]
+    1. **Heun predictor-corrector** -- The forward drift is the trapezoidal
+       average  0.5*(f_curr + f_next)*dt  instead of the Euler  f_curr*dt.
+       The predictor is a standard EM step; the model is then evaluated at the
+       predicted point to obtain f_next; the corrector reuses the *same noise*
+       with the averaged drift.  Cost: still one model evaluation per step
+       (at the predicted point; the departure-point evaluation is carried
+       forward from the previous step).
 
-    # > compute velocity
-    g.ndata["xt"] = x.view(g.num_nodes(), 3) # [batch_size * n_particles, 3]
-    g.ndata["t"] = t_per_node.view(-1, 1) # [batch_size * n_particles, 1]
-    velocity = model(g)
-    # velocity: (batch_size * n_particles, 3)
-    # x: (batch_size, n_particles * 3)
-    # t: (batch_size * n_particles, )
+    2. **Trapezoidal backward mean** -- The backward (virtual reverse) mean
+       uses  0.5*(g_curr + g_next)*dt  where g_curr and g_next are the
+       backward drifts evaluated at departure and arrival, respectively.
+       This is free: both sets of (v, s) are already available.
 
-    # > compute score
-    velocity = velocity.view(g.batch_size, n_particles * 3)
-    score = plan.get_score_from_velocity(t, x, velocity)
-    # velocity: (batch_size, n_particles * 3)
-    # score: (batch_size, n_particles * 3)
+    3. **Midpoint variance** -- A shared  xi_mid = (xi_curr + xi_next) / 2
+       is used for both forward and backward log-probs.  Because the same
+       variance appears in both Gaussian kernels, the normalisation constants
+       cancel *exactly* in the per-step Jarzynski weight, eliminating any
+       log-determinant mismatch.
 
-    # > compute coefficients
-    eta = beta + (1 - beta) * zeta
-    diffusion_coeff = plan.sigma_t(t).view(-1, 1) ** 2
-    xi = diffusion_coeff * (beta + (1 - beta) * 2.0 * zeta) / beta
-    # diffusion_coeff: (batch_size, 1)
-    # eta: (batch_size, 1)
-    # xi: (batch_size, 1)
+    Together these remove the  sign*(v_{i+1} - v_i)  velocity-difference term
+    from the per-step work and symmetrise the evaluation, leaving only the
+    irreducible  xi*s  residual (from f_fwd + f_bwd = xi*s) in the backward
+    quadratic form.
 
-    # > brownian motion
-    w_cur = torch.randn_like(x).view(g.num_nodes(), 3)
-    w_cur = scatter_center_mol(w_cur, g) # NOTE: center noise at origin removes a degree of freedom!
-    dw = w_cur * (dt ** 0.5)
-    dw = dw.view(x.shape)
-    # dw: (batch_size, n_particles * 3)
+    Args:
+        x_init:       Initial samples, shape (B, n_particles * 3).
+        times:        1-D time grid.  Ascending for generative, descending
+                      for noising.
+        graph:        DGL graph with molecular features.
+        vector_field: Trained velocity-field model.
+        plan:         Stochastic-interpolant plan.
+        forward:      True = generative (noise->data),
+                      False = noising   (data->noise).
+        beta:         Inverse-temperature ratio  (default 1.0).
+        zeta:         Diffusion annealing parameter (must be > 0, default 1.0).
 
-    # > compute forward mean
-    fwd_drift  = velocity + 0.5 * eta * diffusion_coeff * score
-    fwd_mean_x = x + fwd_drift * dt
-    # fwd_mean_x: (batch_size, n_particles * 3)
+    Returns:
+        x:       Final samples  (B, D),  CPU, float32.
+        log_fwd: Simulated-path log-prob  (B,),  CPU, float64.
+        log_bwd: Virtual-reverse log-prob (B,),  CPU, float64.
+    """
 
-    # > update x
-    x_next = fwd_mean_x + torch.sqrt(xi) * dw
-    # x_next: (batch_size, n_particles * 3)
+    # ── Validate ─────────────────────────────────────────────────────
+    assert zeta > 0.0, "zeta must be > 0 for numerical stability"
 
-    # > compute backward mean
-    bwd_drift  = velocity - 0.5 * eta * diffusion_coeff * score
-    bwd_mean_x = x_next + bwd_drift * dt
-    # bwd_mean_x: (batch_size, n_particles * 3)
+    # ── Integration constants ────────────────────────────────────────
+    x        = x_init.clone()
+    dt       = (times[1] - times[0]).abs().item()
+    eta      = beta + (1 - beta) * zeta
+    sign     = 1.0 if simulate_generative else -1.0
+    xi_scale = (beta + (1 - beta) * 2.0 * zeta) / beta   # xi = sigma^2 * xi_scale
 
-    # > compute variance
-    variance = (xi * dt).squeeze(-1)
-    # variance: (batch_size, )
+    t_eps = max(1e-4, 0.5 * dt)
+    times = times.clamp(t_eps, 1.0 - t_eps)
 
-    # > log probability (centroid-centered noise)
-    fwd_log_prob = transition_log_prob(x_next, fwd_mean_x, variance, n_particles)
-    bwd_log_prob = transition_log_prob(x, bwd_mean_x, variance, n_particles)
-    # fwd_log_prob: (batch_size, )
-    # bwd_log_prob: (batch_size, )
+    # ── Batch / graph dimensions ─────────────────────────────────────
+    batch_size  = graph.batch_size
+    n_particles = graph.num_nodes() // batch_size
+    device      = next(vector_field.parameters()).device
 
-    return x_next, fwd_log_prob, bwd_log_prob
+    log_fwd = torch.zeros(batch_size, device=device, dtype=torch.float64)
+    log_bwd = torch.zeros(batch_size, device=device, dtype=torch.float64)
 
+    # ── Move data to device ──────────────────────────────────────────
+    graph.ndata["xt"] = x_init.view(graph.num_nodes(), 3)
+    graph.ndata["t"]  = times[0].expand(batch_size * n_particles).view(-1, 1)
+    graph = graph.to(device)
+    times = times.to(device)
+    x     = x.to(device)
 
-def noising_transition_kernel_step(
-    dt: float,
-    t: Tensor,
-    x: Tensor,
-    g: dgl.DGLGraph,
-    plan: Plan,
-    model: torch.nn.Module,
-    beta: float = 1.0,
-    zeta: float = 1.0,
-) -> Tuple[Tensor, Tensor]:
+    # ── Initial velocity & score ─────────────────────────────────────
+    v = vector_field(graph).view(batch_size, n_particles * 3)
+    s = plan.get_score_from_velocity(times[0], x, v)
+    s = torch.nan_to_num(s, nan=0.0, posinf=0.0, neginf=0.0)
 
-    assert zeta > 0.0, "zeta must be strictly positive or else numerical instability will occur"
+    # ── Main integration loop ────────────────────────────────────────
+    for i in range(len(times) - 1):
 
-    # > expand time variable to match the number of nodes for each molecule in the batch
-    # NOTE: Expected that all molecules in the batch have the same number of atoms (i.e. same molecule for all graphs in the batch)
-    # NOTE: it is expected that (t) has shape (batch_size, )
-    n_particles = g.num_nodes() // g.batch_size
-    t_per_node = t.repeat_interleave(n_particles) # [batch_size * n_particles, ]
+        t_curr = times[i]
+        t_next = times[i + 1]
 
-    ###############################################
-    # Noising process direction
-    ###############################################
-    # > compute velocity
-    g.ndata["xt"] = x.view(g.num_nodes(), 3) # [batch_size * n_particles, 3]
-    g.ndata["t"] = t_per_node.view(-1, 1) # [batch_size * n_particles, 1]
-    velocity = model(g)
-    # velocity: (batch_size * n_particles, 3)
-    # x: (batch_size, n_particles * 3)
-    # t: (batch_size * n_particles, )
+        # ── Diffusion coefficients at BOTH endpoints ─────────────────
+        sigma2_curr = plan.sigma_t(t_curr).view(-1, 1) ** 2
+        sigma2_next = plan.sigma_t(t_next).view(-1, 1) ** 2
+        xi_curr     = sigma2_curr * xi_scale
+        xi_next     = sigma2_next * xi_scale
 
-    # > compute score
-    velocity = velocity.view(g.batch_size, n_particles * 3)
-    score = plan.get_score_from_velocity(t_per_node, x, velocity)
-    # velocity: (batch_size, n_particles * 3)
-    # score: (batch_size, n_particles * 3)
+        # Midpoint variance (shared by forward & backward kernels)
+        xi_mid = 0.5 * (xi_curr + xi_next)
 
-    # > compute coefficients
-    eta = beta + (1 - beta) * zeta
-    diffusion_coeff = plan.sigma_t(t_per_node).view(-1, 1) ** 2
-    xi = diffusion_coeff * (beta + (1 - beta) * 2.0 * zeta) / beta
-    # diffusion_coeff: (batch_size, 1)
-    # eta: (batch_size, 1)
-    # xi: (batch_size, 1)
+        # Backward score coefficients at each endpoint
+        #   bwd_coeff = xi - 0.5 * eta * sigma^2
+        bwd_coeff_curr = xi_curr - 0.5 * eta * sigma2_curr
+        bwd_coeff_next = xi_next - 0.5 * eta * sigma2_next
 
-    # > brownian motion
-    w_cur = torch.randn_like(x).view(g.num_nodes(), 3)
-    w_cur = scatter_center_mol(w_cur, g) # NOTE: center noise at origin removes a degree of freedom!
-    dw = w_cur * (dt ** 0.5)
-    dw = dw.view(x.shape)
-    # dw: (batch_size, n_particles * 3)
+        # ── Centroid-centred Brownian increment (sampled ONCE) ────────
+        w = torch.randn_like(x).view(graph.num_nodes(), 3)
+        w = scatter_center_mol(w, graph)
+        dw = (w * dt**0.5).view(x.shape)
 
-    # > compute backward mean
-    bwd_drift  = velocity - 0.5 * eta * diffusion_coeff * score
-    bwd_mean_x = x + bwd_drift * dt
-    # bwd_mean_x: (batch_size, n_particles * 3)
+        # ── (1) Forward drift at DEPARTURE ───────────────────────────
+        f_curr = sign * v + 0.5 * eta * sigma2_curr * s
 
-    ###############################################
-    # Proposal step
-    ###############################################
-    # > update x
-    x_prev = bwd_mean_x + torch.sqrt(xi) * dw
-    # x_prev: (batch_size, n_particles * 3)
+        # ── (2) EM predictor (uses midpoint noise) ───────────────────
+        x_pred = x + f_curr * dt + torch.sqrt(xi_mid) * dw
 
-    ###############################################
-    # Generative process direction
-    ###############################################
-    # > compute velocity
-    g.ndata["xt"] = x_prev.view(g.num_nodes(), 3) # [batch_size * n_particles, 3]
-    velocity = model(g)
-    # velocity: (batch_size * n_particles, 3)
-    # x_prev: (batch_size, n_particles * 3)
+        # ── (3) Model evaluation at PREDICTED arrival ────────────────
+        graph.ndata["xt"] = x_pred.view(graph.num_nodes(), 3)
+        graph.ndata["t"]  = t_next.expand(batch_size * n_particles).view(-1, 1)
 
-    # > compute score
-    velocity = velocity.view(g.batch_size, n_particles * 3)
-    score = plan.get_score_from_velocity(t_per_node, x_prev, velocity)
-    # velocity: (batch_size, n_particles * 3)
-    # score: (batch_size, n_particles * 3)
+        v_new = vector_field(graph).view(batch_size, n_particles * 3)
+        s_new = plan.get_score_from_velocity(t_next, x_pred, v_new)
+        s_new = torch.nan_to_num(s_new, nan=0.0, posinf=0.0, neginf=0.0)
 
-    # > compute forward mean
-    fwd_drift  = velocity + 0.5 * eta * diffusion_coeff * score
-    fwd_mean_x = x_prev + fwd_drift * dt
-    # fwd_mean_x: (batch_size, n_particles * 3)
+        # ── (4) Forward drift at ARRIVAL (predicted point) ───────────
+        f_next = sign * v_new + 0.5 * eta * sigma2_next * s_new
 
-    ###############################################
-    # Log Probabilities
-    ###############################################
-    # > compute variance
-    variance = (xi * dt).squeeze(-1)
-    # variance: (batch_size, )
+        # ── (5) Heun corrector: trapezoidal forward mean ─────────────
+        mu_fwd = x + 0.5 * (f_curr + f_next) * dt
+        x_new  = mu_fwd + torch.sqrt(xi_mid) * dw        # SAME noise
 
-    # > log probability (centroid-centered noise)
-    fwd_log_prob = transition_log_prob(x, fwd_mean_x, variance, n_particles)
-    bwd_log_prob = transition_log_prob(x_prev, bwd_mean_x, variance, n_particles)
-    # fwd_log_prob: (batch_size, )
-    # bwd_log_prob: (batch_size, )
+        # ── (6) Forward log-prob (midpoint variance) ─────────────────
+        variance = (xi_mid * dt).squeeze(-1)
+        log_fwd += transition_log_prob(
+            x_new, mu_fwd, variance, n_particles
+        ).to(torch.float64)
 
-    return x_prev, fwd_log_prob, bwd_log_prob
+        # ── (7) Backward drifts at BOTH endpoints ────────────────────
+        g_curr = -sign * v     + bwd_coeff_curr * s
+        g_next = -sign * v_new + bwd_coeff_next * s_new
+
+        # ── (8) Trapezoidal backward mean ────────────────────────────
+        mu_bwd = x_new + 0.5 * (g_curr + g_next) * dt
+
+        # ── (9) Backward log-prob (SAME midpoint variance) ───────────
+        log_bwd += transition_log_prob(
+            x, mu_bwd, variance, n_particles
+        ).to(torch.float64)
+
+        # Advance state
+        x, v, s = x_new, v_new, s_new
+
+    return x.cpu(), log_fwd.cpu(), log_bwd.cpu()
 
 
-def accept_reject(log_alpha: Tensor) -> Tuple[Tensor, Optional[Tensor]]:
-    # Ensure α ≤ 1 and map NaNs to probability zero
-    log_alpha = torch.nan_to_num(log_alpha, nan=-torch.inf)
+@torch.no_grad()
+def ncmc_accept_reject(
+    x_current: Tensor,
+    x_proposed: Tensor,
+    log_pi_current: Tensor,
+    log_pi_proposed: Tensor,
+    log_fwd_noise: Tensor,
+    log_bwd_noise: Tensor,
+    log_fwd_latents: Tensor,
+    log_bwd_latents: Tensor,
+    log_fwd_gen: Tensor,
+    log_bwd_gen: Tensor,
+) -> Tuple[Tensor, Tensor, Tensor]:
+    """
+    NCMC Metropolis-Hastings accept/reject for the three-leg proposal:
+
+        x --(noise)--> z0 --(OU bridge)--> z_k --(generate)--> x'
+
+    The log acceptance ratio is:
+
+        log w = [log pi(x') - log pi(x)]
+              + [log_bwd_noise + log_bwd_latents + log_bwd_gen]
+              - [log_fwd_noise + log_fwd_latents + log_fwd_gen]
+
+    Args:
+        x_current:       Current samples,                   shape (B, D).
+        x_proposed:      Proposed samples,                  shape (B, D).
+        log_pi_current:  log pi(x) target density,          shape (B,).
+        log_pi_proposed: log pi(x') target density,         shape (B,).
+        log_fwd_noise:   Forward path measure (noising),    shape (B,).
+        log_bwd_noise:   Backward path measure (noising),   shape (B,).
+        log_fwd_latents: Forward path measure (OU bridge),  shape (B,).
+        log_bwd_latents: Backward path measure (OU bridge), shape (B,).
+        log_fwd_gen:     Forward path measure (generative), shape (B,).
+        log_bwd_gen:     Backward path measure (generative),shape (B,).
+
+    Returns:
+        x_out:  Accepted samples, shape (B, D).
+        accept: Boolean acceptance mask, shape (B,).
+        log_w:  Log acceptance ratios, shape (B,).
+    """
+
+    # Total forward path log-probability: x -> z0 -> z_k -> x'
+    log_fwd = log_fwd_noise + log_fwd_latents + log_fwd_gen
+
+    # Total backward path log-probability: x' -> z_k -> z0 -> x
+    log_bwd = log_bwd_noise + log_bwd_latents + log_bwd_gen
+
+    # NCMC log acceptance ratio (Metropolis-Hastings)
+    log_alpha = (log_pi_proposed - log_pi_current) + (log_bwd - log_fwd)
+
+    # ── Sanitise ─────────────────────────────────────────────────────
+    # Map any NaN / +inf to rejection  (log_alpha = -inf => alpha = 0)
+    log_alpha = torch.nan_to_num(log_alpha, nan=-torch.inf, posinf=0.0, neginf=-torch.inf)
+    # Clamp: alpha <= 1  =>  log_alpha <= 0
     log_alpha = log_alpha.clamp(max=0.0)
 
-    # Log acceptance probability for reporting (avoid exp under/overflow)
-    log_accept_prob = log_alpha.detach()
-    log_eps = torch.log(torch.tensor(1e-6, device=log_alpha.device, dtype=log_alpha.dtype))
-    log_acceptance_rate = torch.logaddexp(log_accept_prob, log_eps).mean()
+    # ── Accept / reject in log space ─────────────────────────────────
+    # accept iff  log(u) < log(alpha),   u ~ Uniform(0, 1)
+    tiny      = torch.finfo(log_alpha.dtype).tiny          # avoid log(0)
+    log_u     = torch.log(torch.rand(log_alpha.shape, dtype=log_alpha.dtype,
+                                     device=log_alpha.device) + tiny)
+    accept_mask = log_u < log_alpha                        # (B,)  bool
 
-    # Accept proposals using a log-space comparison: log u < log α
-    tiny = torch.finfo(log_alpha.dtype).tiny
-    log_uniform = torch.log(torch.rand_like(log_alpha) + tiny)
-    accept_mask = log_uniform < log_alpha
-    return log_acceptance_rate, accept_mask
+    # ── Mix samples ──────────────────────────────────────────────────
+    x_accepted = torch.where(
+        accept_mask.unsqueeze(-1),                         # broadcast (B,1)
+        x_proposed,
+        x_current,
+    )
+
+    return accept_mask, log_alpha.to(torch.float32), x_accepted
+
 
 ###################################
 # Classes
 ###################################
+
+
+class MeanFreePrior(torch.distributions.Distribution):
+    arg_constraints: Dict[str, constraints.Constraint] = {}
+
+    def __init__(self, n_particles, spatial_dim, scale, device="cpu"):
+        super().__init__()
+        self.n_particles = n_particles
+        self.spatial_dim = spatial_dim
+        self.dim = n_particles * spatial_dim
+        self.scale = scale
+        self.device = device
+
+    def log_prob(self, x):
+        x = x.reshape(-1, self.n_particles, self.spatial_dim)
+        N, D = x.shape[-2:]
+
+        # r is invariant to a basis change in the relevant hyperplane.
+        r2 = torch.sum(x**2, dim=(-1, -2)) / self.scale**2
+
+        # The relevant hyperplane is (N-1) * D dimensional.
+        degrees_of_freedom = (N - 1) * D
+
+        # Normalizing constant and logpx are computed:
+        log_normalizing_constant = (
+            -0.5 * degrees_of_freedom * math.log(2 * torch.pi * self.scale**2)
+        )
+        log_px = -0.5 * r2 + log_normalizing_constant
+        return log_px
+
+    def sample(self, n_samples):
+        if isinstance(n_samples, int):
+            n_samples = torch.Size([n_samples])
+        samples = torch.randn(*n_samples, self.dim, device=self.device) * self.scale
+        samples = samples.reshape(-1, self.n_particles, self.spatial_dim)
+        samples = samples - samples.mean(-2, keepdims=True)
+        return samples.reshape(-1, self.n_particles * self.spatial_dim)
+
+    def score(self, x):
+        """Analytical score function: ∇_x log p(x) = -x / scale^2"""
+        return -x / self.scale**2
+
+    def mean_free(self, x):
+        x = x.reshape(-1, 22, 3)
+        x = x - x.mean(dim=1, keepdim=True)
+        x = x.reshape(-1, 22 * 3)
+        return x
+
 
 @dataclass
 class Context:
@@ -380,12 +501,12 @@ class NonequilibriumCandidateMonteCarlo:
                 # run local MALA steps at the high temperature
                 # > find the high temperature chains and run MALA steps
                 hot_chains = self._context.chains[~self._context.states]
-                for _ in tqdm(range(self.n_mala_steps), desc=f"High Temperature ({self.temp_high}K) MALA Steps"):
-                    hot_chains = mala_transition_kernel_step(
-                        step_size=self.mala_step_size,
-                        x=hot_chains,
-                        force_field=force_field_high,
-                    )
+                # for _ in tqdm(range(self.n_mala_steps), desc=f"High Temperature ({self.temp_high}K) MALA Steps"):
+                #     hot_chains = mala_transition_kernel_step(
+                #         step_size=self.mala_step_size,
+                #         x=hot_chains,
+                #         force_field=force_field_high,
+                #     )
                 self._context.update_chains(~self._context.states, hot_chains)
             
             #########################################################################################################################
@@ -416,10 +537,10 @@ class NonequilibriumCandidateMonteCarlo:
                 # run local MALA steps at the low temperature
                 # > find the low temperature chains and run MALA steps
                 low_temperature_chains = self._context.chains[self._context.states]
-                for _ in tqdm(range(self.n_mala_steps), desc=f"Low Temperature ({self.temp_low}K) MALA Steps"):
-                    low_temperature_chains = mala_transition_kernel_step(
-                        step_size=self.mala_step_size,
-                        x=low_temperature_chains,
-                        force_field=force_field_low,
-                    )
+                # for _ in tqdm(range(self.n_mala_steps), desc=f"Low Temperature ({self.temp_low}K) MALA Steps"):
+                #     low_temperature_chains = mala_transition_kernel_step(
+                #         step_size=self.mala_step_size,
+                #         x=low_temperature_chains,
+                #         force_field=force_field_low,
+                #     )
                 self._context.update_chains(self._context.states, low_temperature_chains)

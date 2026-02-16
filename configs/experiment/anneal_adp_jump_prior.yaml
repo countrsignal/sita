@@ -17,7 +17,7 @@ seed: 12345
 
 task_name: "anneal_adp"
 
-tags: ["Bootstrap", "ADP", "Jump-Prior", "Medium Increments"]
+tags: ["Bootstrap", "ADP", "Jump-Prior", "Root-Temp-Ratio", "EBM-400epochs", "Flow-200epochs", "Q99"]
 
 logger:
   wandb:
@@ -34,15 +34,15 @@ flow:
   n_features: 24
 
 optimizer:
-  lr: 5e-4
+  lr: 1e-3
 
 #########################
 # custom fields 
 #########################
 
-temperature_ladder: [755.95, 555.52, 408.24, 300.00]
-n_epochs_finetune_ebm: [300, 300, 300, 300] # <<!>> LONG EBM
-n_epochs_finetune_flow: [150, 150, 150, 150]
+temperature_ladder: [755.95, 555.52, 300.00]
+n_epochs_finetune_ebm: [400, 400, 400] # <<!>> LONG EBM
+n_epochs_finetune_flow: [200, 200, 200]
 era_ckpt_dir: ${paths.output_dir}/era_ckpts
 ebm_inspection_interval: 50
 flow_inspection_interval: 50
@@ -53,8 +53,9 @@ ebm_model_ckpt: ${paths.root_dir}/experimental_results/pretrain_ebm/runs/2026-01
 flow_model_ckpt: ${paths.root_dir}/experimental_results/pretrain_flow/runs/2026-01-18_14-56-35/ema_model.pth
 initial_flow_samples_path: null #${paths.root_dir}/experimental_results/flow_samples_1200K.npy
 
-iw_quantile: 0.98
+iw_quantile: 0.99
 n_iw_samples: 100_000 # NOTE: this sets the number of samples to fine-tune the flow
+anneal_prior: true
 
 plans:
   flow_plan:
@@ -62,9 +63,6 @@ plans:
     coupling_plan: "ot"
   ebm_plan:
     _target_: aita.plans.TrigPlanLite
-
-anneal_prior:
-  prior_beta: [0.8, 0.85, 0.90, 0.95]
 
 generate_ebm_dataset:
   n_samples: 200_000

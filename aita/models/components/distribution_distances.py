@@ -73,6 +73,41 @@ def compute_distances(pred, true):
     return mse, me, mae
 
 
+def distribution_distances(pred: torch.Tensor, true: Union[torch.Tensor, list], prefix=""):
+    """computes distances between distributions.
+    pred: [batch, times, dims] tensor
+    true: [batch, times, dims] tensor or list[batch[i], dims] of length times
+
+    This handles jagged times as a list of tensors.
+    """
+    NAMES = [
+        "1-Wasserstein",
+        "2-Wasserstein",
+        "RBF_MMD",
+        "Mean_MSE",
+        "Mean_L2",
+        "Mean_L1",
+        "Median_MSE",
+        "Median_L2",
+        "Median_L1",
+        "Eq-EMD2",
+    ]
+    a = pred.cpu().view(pred.shape[0], -1)
+    b = true.cpu().view(true.shape[0], -1)
+
+    w1 = wasserstein(a, b, power=1)
+    w2 = wasserstein(a, b, power=2)
+
+    mmd_rbf = mix_rbf_mmd2(a, b, sigma_list=[0.01, 0.1, 1, 10, 100]).item()
+    mean_dists = compute_distances(torch.mean(a, dim=0), torch.mean(b, dim=0))
+    median_dists = compute_distances(torch.median(a, dim=0)[0], torch.median(b, dim=0)[0])
+    dists = [w1, w2, mmd_rbf, *mean_dists, *median_dists]
+
+    NAMES = [f"{prefix}/{name}" for name in NAMES]
+
+    return dict(zip(NAMES, dists))
+
+
 def compute_distribution_distances(pred: torch.Tensor, true: Union[torch.Tensor, list]):
     """computes distances between distributions.
     pred: [batch, times, dims] tensor
