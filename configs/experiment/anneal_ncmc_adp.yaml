@@ -1,0 +1,53 @@
+# @package _global_
+
+# to execute this experiment run:
+# python train.py experiment=example
+
+# all parameters below will be merged with parameters from default configurations set above
+# this allows you to overwrite only specified parameters
+defaults:
+  - override /dataset: ncmc_single
+  - override /energy: adp
+  - override /ncmc: adp
+  - override /flow: vfv2
+  - override /optimizer: adam
+  - override /scheduler: reduce_on_plateau
+
+seed: 12345
+
+task_name: "anneal_ncmc_adp"
+
+tags: ["Bootstrap", "NCMC", "ADP"]
+
+logger:
+  wandb:
+    tags: ${tags}
+
+dataset:
+  dcd_path: ${paths.data_dir}/mds/temperature/alanine_dipeptide_1200K_short_trajectory.dcd
+  data_path: ${paths.data_dir}
+  pdb_id: "alanine_dipeptide"
+
+flow:
+  n_features: 24
+
+optimizer:
+  lr: 1e-3
+
+
+#########################
+# custom fields 
+#########################
+
+era_ckpt_dir: ${paths.output_dir}/era_ckpts
+flow_inspection_interval: 50
+n_epochs_finetune_flow: 200
+
+flow_model_ckpt: ${paths.root_dir}/experimental_results/pretrain_flow/runs/2026-01-18_14-56-35/ema_model.pth
+
+generate_flow_samples:
+  n_samples: 30_000
+  samples_per_batch: 5_000
+  n_timesteps: 100
+  method: "dopri5"
+  tsr_params: null

@@ -11,7 +11,7 @@ from tqdm import tqdm
 from pathlib import Path
 
 from abc import ABC
-from typing import Optional, List, Dict, Tuple, Union
+from typing import Optional, List, Dict, Tuple, Union, Callable
 
 from .features import ATOM_TYPES_ENCODING
 from .molecule import Molecule, DEBUG_MOLECULES
@@ -327,7 +327,7 @@ class GenerativeDatasetSingleMolecule(Dataset):
         return len(self.cache)
 
     def __getitem__(self, index):
-        # convert one-hot atom types to tokens
+        # get the mol of interest
         mol_id  = self.backmap[index]
 
         if self.training_sampler:
@@ -427,5 +427,151 @@ class GenerativeDatasetSingleMolecule(Dataset):
         dataset.training_sampler = training_sampler
         # clear memory
         del(samples_np, samples_th)
+        gc.collect()
+        return dataset
+
+
+class NCMCSingleMoleculeDataset(Dataset):
+
+    def __init__(self, data_path: str, pdb_id: str):
+        """
+        Args:
+            data_path: path to the data directory
+            pdb_id: pdb id of the molecule
+        """
+        super(NCMCSingleMoleculeDataset, self).__init__()
+
+        self.data_path = Path(data_path)
+        self.pdb_id = pdb_id
+
+        if pdb_id in DEBUG_MOLECULES:
+            self.pdb_path = self.data_path / "debug" / f"{pdb_id}.pdb"
+            self.molecules = {
+                pdb_id: DEBUG_MOLECULES[pdb_id].from_pdb(self.pdb_path)
+            }
+        else:
+            self.pdb_path = self.data_path / "pdbs" / f"{pdb_id}.pdb"
+            self.molecules = {
+                pdb_id: Molecule.from_pdb(self.pdb_path)
+            }
+
+        self.backmap = {}
+        self._samples: List[torch.Tensor] = []
+        self._energies: List[torch.Tensor] = []
+
+    @property
+    def samples(self) -> List[torch.Tensor]:
+        return self._samples
+
+    @samples.setter
+    def samples(self, value: List[torch.Tensor]) -> None:
+        self._samples = value
+
+    @property
+    def energies(self) -> List[torch.Tensor]:
+        return self._energies
+
+    @energies.setter
+    def energies(self, value: List[torch.Tensor]) -> None:
+        self._energies = value
+
+    def clear_cache(self) -> None:
+        self._samples = []
+        self._energies = []
+        self.backmap = {}
+    
+    def materialize_tensors(self) -> Tuple[torch.Tensor, torch.Tensor]:
+        all_samples = torch.cat(self._samples, dim=0)
+        all_energies = torch.cat(self._energies, dim=0)
+        return all_samples, all_energies
+
+    def update_dataset(self, mol_id: str, samples: List[torch.Tensor], energies: List[torch.Tensor]) -> None:
+        assert len(samples) == len(energies), "Number of samples and energies must be the same"
+
+        prev_num_samples = len(self._samples)
+
+        self._samples.extend(samples)
+        self._energies.extend(energies)
+
+        num_samples_enrolled = len(self._samples)
+        self.backmap.update({idx: mol_id for idx in range(prev_num_samples, num_samples_enrolled)})
+
+        del(num_samples_enrolled, prev_num_samples)
+        gc.collect()
+
+    def __len__(self):
+        return len(self._samples)
+
+    def __getitem__(self, index):
+        mol_id = self.backmap[index]
+        g = self.molecules[mol_id].to_dgl_graph()
+        g.ndata["x1"] = self._samples[index].view(-1, 3) # (num_nodes, 3)
+        return g
+
+    def get_train_dataloader(self, batch_size: int, num_workers: int = 0, pin_memory: bool = False) -> Union[DataLoader, GraphDataLoader]:
+        return dgl.dataloading.GraphDataLoader(
+            self,
+            batch_size=batch_size,
+            shuffle=True,
+            drop_last=True,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+        )
+
+    def get_eval_dataloader(self, batch_size: int, num_workers: int = 0, pin_memory: bool = False) -> Union[DataLoader, GraphDataLoader]:
+        return dgl.dataloading.GraphDataLoader(
+            self,
+            batch_size=batch_size,
+            shuffle=False,
+            drop_last=False,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+        )
+
+    def save_samples(self, save_dir: str, filename: str) -> None:
+        """Materialize current samples and save to a numpy file."""
+        all_samples, _ = self.materialize_tensors()
+        np.save(
+            str(Path(save_dir) / filename),
+            all_samples.numpy(),
+            allow_pickle=True,
+        )
+        del(all_samples, _)
+
+    @staticmethod
+    def init_from_dcd(
+        dcd_path: str,
+        data_path: str,
+        pdb_id: str,
+        subsample_size: int,
+        forcefield: Callable,
+    ) -> "NCMCSingleMoleculeDataset":
+
+        # check if debug molecule
+        if pdb_id in DEBUG_MOLECULES:
+            path_to_pdb = Path(data_path) / "debug" / f"{pdb_id}.pdb"
+        else:
+            path_to_pdb = Path(data_path) / "pdbs" / f"{pdb_id}.pdb"
+
+        # load trajectory
+        traj = md.load(dcd_path, top=path_to_pdb)
+        samples_th = torch.from_numpy(traj.xyz).float().view(-1, forcefield.n_particles * 3)
+
+        # subsample if requested
+        if subsample_size is not None:
+            random_indices = torch.randint(0, samples_th.size(0), (subsample_size,))
+            samples_th = samples_th[random_indices]
+
+        # compute energies
+        energies = -forcefield(samples_th, return_force=False)
+
+        # initialize dataset
+        dataset = NCMCSingleMoleculeDataset(data_path=data_path, pdb_id=pdb_id)
+        dataset.update_dataset(
+            mol_id=pdb_id,
+            samples=samples_th.chunk(samples_th.size(0), dim=0),
+            energies=energies.chunk(energies.size(0), dim=0),
+        )
+        del(traj, samples_th, energies)
         gc.collect()
         return dataset

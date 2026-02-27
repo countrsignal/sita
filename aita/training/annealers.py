@@ -20,7 +20,8 @@ from ..utils.logging import RankedLogger
 from ..models.vector_field_v2 import VFV2
 from ..models.vector_field_tempered import VFT
 from ..utils.data_utils import angstrom_to_nm
-from ..data.datasets import GenerativeDatasetSingleMolecule
+from ..data.datasets import GenerativeDatasetSingleMolecule, NCMCSingleMoleculeDataset
+from ..ncmc import NonequilibriumCandidateMonteCarlo
 from .common import fetch_wandb_logger, eval_ebm_single_molecule
 from ..utils.plotting import plot_ebm_histogram, plot_energy_histograms, adp_ramachandran_plot, adp_free_energy_profile
 from ..utils.inference_utils import calc_log_w, quantile_clip, quantile_filter, normalize_log_w, calc_ess, importance_weighted_resample
@@ -553,3 +554,300 @@ class AnnealerADP(LightningModule):
         super().optimizer_step(*args, **kwargs)
         if self.ema is not None:
             self.ema.update()
+
+
+class AnnealerADP_NCMC(LightningModule):
+    """Inference-time annealer that uses NonequilibriumCandidateMonteCarlo
+    (NCMC) to produce Boltzmann-distributed samples at each target temperature,
+    then fine-tunes the flow model on the accepted configurations.
+
+    Unlike AnnealerADP, no surrogate density (EBM) is needed: NCMC replaces
+    the importance-weighted resampling step with a three-leg proposal
+    (noise -> OU bridge -> generate) and Metropolis accept/reject.
+
+    Each call to ``trainer.fit(annealer)`` runs one temperature step:
+      1. NCMC sampling at the current temperature pair (T_high -> T_low)
+      2. Flow training on the accepted samples
+    """
+
+    def __init__(self, config: DictConfig) -> None:
+        super().__init__()
+
+        # Passing in config expands it one level, so can accessed
+        # by self.hparams.train instead of self.hparams.config.train
+        self.save_hyperparameters(config, logger=False)
+        # Ensure that setup() is only called once
+        self._is_setup = False
+        # Setup at init
+        log.log(20, "Setting up annealer sub-modules...")
+        self.setup()
+
+    def setup(self, stage: Optional[str] = None) -> None:
+        if self._is_setup:
+            return
+        else:
+            self._is_setup = True
+
+        # Setup NCMC sampler
+        self.ncmc: NonequilibriumCandidateMonteCarlo = hydra.utils.instantiate(self.hparams.ncmc)
+        log.log(20, "NCMC Sampler Initialized.")
+
+        # Setup MD forcefield (partially instantiated -- requires temperature)
+        self.forcefield_partial = hydra.utils.instantiate(self.hparams.energy)
+        log.log(20, "Forcefield Initialized.")
+
+        # Setup dataset (NCMC variant stores both samples and energies)
+        # > first instantiate the forcefield at the current (high) temperature
+        forcefield_high = self.forcefield_partial(temperature=self.ncmc.temperature_ladder[0][0])
+        # > then initialize the dataset from the dcd file
+        self.dataset: NCMCSingleMoleculeDataset = NCMCSingleMoleculeDataset.init_from_dcd(
+            dcd_path=self.hparams.dataset.dcd_path,
+            data_path=self.hparams.dataset.data_path,
+            pdb_id=self.hparams.dataset.pdb_id,
+            subsample_size=self.hparams.dataset.subsample_size,
+            forcefield=forcefield_high,
+        )
+        del(forcefield_high)
+        log.log(20, "Dataset Initialized.")
+
+        # Setup interpolant (flow only -- no EBM needed for NCMC)
+        self.interpolant = hydra.utils.instantiate(self.hparams.interpolant)
+        log.log(20, "Interpolant Initialized.")
+
+        # Setup pipeline
+        if "pipeline" in self.hparams and self.hparams.pipeline is not None:
+            self.pipeline = Pipeline(self.hparams.pipeline)
+            log.log(20, "Pipeline Initialized.")
+        else:
+            self.pipeline = None
+            log.log(20, "Pipeline not found. Skipping pipeline.")
+
+        # Load pre-trained flow model
+        self.flow: FLOW_MODEL = hydra.utils.instantiate(self.hparams.flow)
+        self.flow = self.flow.load_from_checkpoint(self.hparams.flow_model_ckpt, weights_only=True, map_location="cpu")
+        log.log(20, "Pre-trained Flow Model Loaded.")
+
+        # Exponential moving average
+        if "ema" in self.hparams:
+            self.ema = hydra.utils.instantiate(self.hparams.ema, model=self.flow)
+            log.log(20, "Training with EMA.")
+        else:
+            self.ema = None
+            log.log(20, "Training without EMA.")
+
+        # Placeholder for reference MD energies (populated in on_fit_start)
+        self.ref_energies = None
+
+        # Current target temperature (set in on_fit_start)
+        self._current_temperature: float = 0.0
+
+        # Variable trackers
+        self._epoch: int = 0
+        self._cumulative_step: int = 0
+
+    # ------------------------------------------------------------------
+    # Checkpointing
+    # ------------------------------------------------------------------
+
+    def save_ema_model(self) -> None:
+        filename = f"flow_ema_model_{int(self._current_temperature)}K.pth"
+        torch.save(self.ema.ema_model.state_dict(), os.path.join(self.hparams.era_ckpt_dir, filename))
+        log.log(20, f"Saved EMA model weights to {filename}")
+
+    # ------------------------------------------------------------------
+    # Lightning plumbing
+    # ------------------------------------------------------------------
+
+    def train_dataloader(self):
+        return self.dataset.get_train_dataloader(self.hparams.loader.batch_size, self.hparams.loader.num_workers, self.hparams.loader.pin_memory)
+
+    def configure_optimizers(self):
+        optimizer = hydra.utils.instantiate(self.hparams.optimizer, params=self.flow.parameters())
+        scheduler = hydra.utils.instantiate(self.hparams.scheduler, optimizer=optimizer)
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                "monitor": "flow/loss",
+                "interval": "epoch",
+                "frequency": 1,
+            },
+        }
+
+    # ------------------------------------------------------------------
+    # Fit lifecycle
+    # ------------------------------------------------------------------
+
+    def reinitialize_ema(self) -> None:
+        # Re-initialize EMA for this training phase
+        if self.ema is not None:
+            self.ema = hydra.utils.instantiate(self.hparams.ema, model=self.flow)
+
+    def on_fit_start(self) -> None:
+        super().on_fit_start()
+
+        if self.ema is not None:
+            if not self.ema.allow_different_devices:
+                self.ema.to(self.device)
+
+        ################################################################################
+        # NCMC Sampling Phase
+        ################################################################################
+
+        # Capture the temperature pair before NCMC advances its internal index
+        T_high, T_low = self.ncmc.temperature_ladder[self.ncmc._temperature_index]
+        self._current_temperature = T_low
+        log.log(20, f"Running NCMC: {T_high}K -> {T_low}K ...")
+
+        # Run NCMC in eval mode (updates dataset with accepted samples in angstroms)
+        self.flow = self.flow.to(self.device)
+        self.flow.eval();
+        accepted_energies = self.ncmc.run(
+            plan=self.interpolant.plan,
+            model=self.flow,
+            dataset=self.dataset,
+            forcefield_partial=self.forcefield_partial,
+        )
+        log.log(20, "NCMC sampling completed.")
+
+        # Save accepted samples for debugging (still in angstroms at this point)
+        self.dataset.save_samples(self.hparams.era_ckpt_dir, f"ncmc_samples_{int(T_low)}K.npy")
+
+        ################################################################################
+        # Reference Data & Diagnostics
+        ################################################################################
+
+        forcefield = self.forcefield_partial(temperature=T_low)
+        log.log(20, f"Forcefield Instantiated at {T_low}K.")
+
+        mol = self.dataset.molecules[self.dataset.pdb_id]
+        dof = mol.n_atoms * 3
+        dcd_dir  = self.dataset.data_path / "mds" / "temperature"
+        dcd_path = list(dcd_dir.glob(f"{mol.name}_{int(T_low)}K*.dcd"))[0]
+
+        log.debug(f"<!>DCD path: {dcd_path}")
+
+        ref_traj = md.load(dcd_path, top=self.dataset.pdb_path)
+        ref_coords = torch.from_numpy(ref_traj.xyz).reshape(-1, dof)
+        ref_energies = -forcefield(ref_coords, return_force=False)
+        log.log(20, "Reference energies computed.")
+
+        self.ref_energies = ref_energies
+
+        # Plot NCMC-accepted vs reference energy distributions
+        wandb_logger = fetch_wandb_logger(self.loggers)
+        if wandb_logger is not None:
+            plot_energy_histograms(
+                ode=accepted_energies.numpy(),
+                sim=ref_energies.numpy(),
+                weights=None,
+                bins=100,
+                xlabel=r"$U(x) / k_{B}T$" + f" ({int(T_low)}K)",
+                figsize=(11, 9),
+                x_lim=(ref_energies.min().item(), ref_energies.max().item() * 1.5),
+                prefix="ncmc_step",
+                wandb_logger=wandb_logger,
+            )
+
+        ################################################################################
+        # Prepare for Flow Training
+        ################################################################################
+        self.flow.train();
+
+        del(mol, ref_traj, ref_coords, forcefield, accepted_energies)
+        torch.cuda.empty_cache()
+        gc.collect()
+
+    def on_before_batch_transfer(self, batch: BATCH_FLOW, dataloader_idx: int) -> BATCH_FLOW:
+        batch = self.interpolant.plan(batch)
+        if self.pipeline is not None:
+            batch = self.pipeline.run_flow(batch, is_training=True)
+        return batch
+
+    def training_step(self, batch: BATCH_FLOW, batch_idx: int) -> Tensor:
+        batch = batch.to(self.device)
+        batch_size = batch.batch_size
+        loss_dict = self.flow.training_step(batch)
+
+        for key, value in loss_dict.items():
+            self.log(
+                f"flow/{key}",
+                value,
+                on_step=False,
+                on_epoch=True,
+                prog_bar=True,
+                batch_size=batch_size,
+            )
+
+        self._cumulative_step += 1
+        return loss_dict["loss"]
+
+    def on_train_epoch_end(self) -> None:
+        super().on_train_epoch_end()
+
+        wandb_logger = fetch_wandb_logger(self.loggers)
+        if wandb_logger is None:
+            return
+
+        # Lightning has already reduced on_epoch metrics; pull the averaged values
+        metrics = {
+            k: v.detach().item()
+            for k, v in self.trainer.callback_metrics.items()
+            if k.startswith("flow/")
+        }
+
+        wandb_logger.log_metrics(metrics, step=self._cumulative_step)
+
+        self._epoch += 1
+
+        ################################################################################
+        # Flow Inspection
+        ################################################################################
+        if self._epoch % self.hparams.flow_inspection_interval == 0:
+            wandb_logger = fetch_wandb_logger(self.loggers)
+            if wandb_logger is not None:
+                log.log(20, f"Logging Flow inspection at end of epoch {self._epoch}...")
+
+                forcefield = self.forcefield_partial(temperature=self._current_temperature)
+                log.log(20, f"Forcefield Instantiated at {self._current_temperature}K.")
+
+                mol = self.dataset.molecules[self.dataset.pdb_id]
+                res_dict = Pipeline.generate_from_flow(
+                    n_samples=self.hparams.generate_flow_samples.n_samples,
+                    samples_per_batch=self.hparams.generate_flow_samples.samples_per_batch,
+                    n_timesteps=self.hparams.generate_flow_samples.n_timesteps,
+                    molecules=[mol],
+                    flow_model=self.flow,
+                    interpolant=self.interpolant,
+                    method=self.hparams.generate_flow_samples.method,
+                    prior_beta=1.0,
+                    temperature=None,
+                    tsr_params=None,
+                )
+
+                gen_samples = res_dict[mol.name]["samples"].reshape(-1, mol.n_atoms * 3)
+                gen_energies = -forcefield(angstrom_to_nm(gen_samples), return_force=False)
+
+                plot_energy_histograms(
+                    ode=gen_energies.numpy(),
+                    sim=self.ref_energies.numpy(),
+                    weights=None,
+                    bins=100,
+                    xlabel=r"$U(x) / k_{B}T$" + f" ({int(self._current_temperature)}K)",
+                    figsize=(11, 9),
+                    x_lim=(self.ref_energies.min().item(), self.ref_energies.max().item() * 1.5),
+                    prefix="inspect/flow/",
+                    wandb_logger=wandb_logger,
+                )
+
+                del(forcefield, res_dict, gen_samples, gen_energies, mol)
+                torch.cuda.empty_cache()
+                gc.collect()
+            else:
+                log.log(20, "No wandb logger found. Skipping Flow inspection.")
+
+    def optimizer_step(self, *args, **kwargs):
+        super().optimizer_step(*args, **kwargs)
+        if self.ema is not None:
+            self.ema.update()
+

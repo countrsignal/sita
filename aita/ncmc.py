@@ -3,13 +3,14 @@ import torch
 from torch import Tensor
 from torch.distributions import constraints
 
+import gc
 import math
 from tqdm import tqdm
-from dataclasses import dataclass, field
-from typing import Dict, Union, Tuple, Optional, Callable
+from typing import Dict, Union, Tuple, Optional, Callable, List
 
 from .plans import Plan
 from .data.molecule import Molecule
+from .data.datasets import NCMCSingleMoleculeDataset
 from .utils.logging import RankedLogger
 from .utils.graph_utils import scatter_center_mol
 from .utils.data_utils import angstrom_to_nm, nm_to_angstrom
@@ -111,7 +112,7 @@ def simulate_ou_forward_reverse(
 
 
 @torch.no_grad()
-def jarzynski_integrate_heun(
+def sde_integrate_heun(
     x_init: torch.Tensor,
     times: torch.Tensor,
     graph: dgl.DGLGraph,
@@ -122,11 +123,11 @@ def jarzynski_integrate_heun(
     zeta: float = 1.0,
 ):
     """
-    Jarzynski integrator with Heun predictor-corrector, trapezoidal backward
+    SDE integrator with Heun predictor-corrector, trapezoidal backward
     mean, and midpoint variance for tighter forward/backward log-probability
     agreement and improved NCMC acceptance rates.
 
-    Three improvements over the basic EM integrator (``jarzynski_integrate``):
+    Three improvements over the basic Euler-Maruyama integrator:
 
     1. **Heun predictor-corrector** -- The forward drift is the trapezoidal
        average  0.5*(f_curr + f_next)*dt  instead of the Euler  f_curr*dt.
@@ -337,14 +338,7 @@ def ncmc_accept_reject(
                                      device=log_alpha.device) + tiny)
     accept_mask = log_u < log_alpha                        # (B,)  bool
 
-    # ── Mix samples ──────────────────────────────────────────────────
-    x_accepted = torch.where(
-        accept_mask.unsqueeze(-1),                         # broadcast (B,1)
-        x_proposed,
-        x_current,
-    )
-
-    return accept_mask, log_alpha.to(torch.float32), x_accepted
+    return accept_mask, log_alpha.to(torch.float32)
 
 
 ###################################
@@ -393,154 +387,176 @@ class MeanFreePrior(torch.distributions.Distribution):
         return -x / self.scale**2
 
     def mean_free(self, x):
-        x = x.reshape(-1, 22, 3)
+        x = x.reshape(-1, self.n_particles, self.spatial_dim)
         x = x - x.mean(dim=1, keepdim=True)
-        x = x.reshape(-1, 22 * 3)
+        x = x.reshape(-1, self.n_particles * self.spatial_dim)
         return x
-
-
-@dataclass
-class Context:
-    mol: Molecule
-    chains: Tensor
-    states: Tensor = field(init=False, default_factory=lambda: torch.empty([]))
-    n_chains: int = field(init=False, default_factory=lambda: 0)
-
-    def __post_init__(self):
-        self.n_chains = self.chains.size(0)
-        self.states = torch.zeros((self.chains.size(0),), dtype=torch.float32, device=self.chains.device)
-
-    def __len__(self):
-        return self.n_chains
-
-    def dispatch(self, device: torch.device) -> None:
-        self.chains = self.chains.to(device)
-        self.states = self.states.to(device)
-
-    def adjust_acceptance_mask(self, acceptance_mask: Tensor) -> Tensor:
-        # Change the incoming acceptance mask so that
-        # chains that have already been accepted are set to FALSE
-        adjusted_acceptance_mask = acceptance_mask.clone()
-        adjusted_acceptance_mask[self.states] = False
-        return adjusted_acceptance_mask
-    
-    def update_chains(self, adjusted_acceptance_mask: Tensor, proposals: Tensor) -> None:
-        self.chains = torch.where(adjusted_acceptance_mask.unsqueeze(-1), proposals, self.chains)
-    
-    def update_states(self, adjusted_acceptance_mask: Tensor) -> None:
-        # if a state is currently True, it must remain true regardless of the acceptance mask being TRUE or FALSE for that chain
-        # if a state is currently False, it must be set to True if the acceptance mask is TRUE for that chain
-        self.states = torch.where(adjusted_acceptance_mask & ~self.states, True, self.states)
 
 
 class NonequilibriumCandidateMonteCarlo:
 
     def __init__(
         self,
-        n_mala_steps: int,
-        n_ncmc_steps: int,
-        zeta: float = 1.0,
-        t_bounds: Tuple[float, float] = (0.0, 0.5),
-        temp_levels: Tuple[float, float] = (755.55, 1200.0),
-        mala_step_size: float = 0.01,
-    ) -> None:
+        n_samples: int,
+        batch_size: int,
+        n_timesteps: int,
+        temperature_ladder: List[List[float]],
+    ):
+        # bookkeeping
+        self.n_samples = n_samples
+        self.batch_size = batch_size
+        self.n_timesteps = n_timesteps
+        self.temperature_ladder = temperature_ladder
 
-        self.n_mala_steps = n_mala_steps
-        self.n_ncmc_steps = n_ncmc_steps
-        self.zeta = zeta
-        self.mala_step_size = mala_step_size
-        self.t_low, self.t_high = t_bounds
-        self.temp_low, self.temp_high = temp_levels
-        self._context = None
-
-    def init_context(self, mol: Molecule, chains: Tensor) -> None:
-        self._context = Context(mol, chains)
-    
-    def sample_times(self) -> Tensor:
-        return torch.rand((len(self._context),)) * (self.t_high - self.t_low) + self.t_low
-    
+        # track ladder index
+        self._temperature_index = 0
+        
     def run(
         self,
         plan: Plan,
         model: torch.nn.Module,
-        force_field_partial: Callable[[Tensor], Tensor],
-    ) -> None:
+        dataset: NCMCSingleMoleculeDataset,
+        forcefield_partial: Callable,
+    ):
+        """
+        Run NCMC pipeline.
 
-        # ensure that the context is initialized
-        assert self._context is not None, "Context must be initialized before running NCMC"
+        Args:
+            plan: Plan object.
+            model: Model object.
+            dataset: NCMCSingleMoleculeDataset object.
+            forcefield_partial: Partially instantiated forcefield object.
+
+        Returns:
+            accepted_energies: Tensor of accepted energies.
+        """
+
+        # NCMC workflow variables
+        accepted_samples = []
+        accepted_energies = []
+        rolling_batch_size = self.batch_size
+
+        # NCMC simulation times
+        rev_times = torch.linspace(1.0, 0.0, self.n_timesteps)
+        gen_times = torch.linspace(0.0, 1.0, self.n_timesteps)
+
+        # NCMC energy functions
+        T_high, T_low = self.temperature_ladder[self._temperature_index]
+        u_low = forcefield_partial(temperature=T_low)
+
+        # Initialize the cold prior
+        cold_prior = MeanFreePrior(
+            n_particles=u_low.n_particles,
+            spatial_dim=3,
+            scale=(T_low / T_high) ** 0.5,
+        )
+
+        # get molecule object
+        mol = dataset.molecules[dataset.pdb_id]
+
+        # materialize the dataset
+        starting_samples, starting_energies = dataset.materialize_tensors()
+        # > convert to angstroms
+        starting_samples = nm_to_angstrom(starting_samples)
+        # > remove center of mass
+        starting_samples = cold_prior.mean_free(starting_samples)
+        # starting_samples: (n_samples, n_particles * 3)
+        # starting_energies: (n_samples,)
+
+        # run NCMC pipeline
+        log.info(f"Running NCMC for {self.n_samples} samples")
+        while len(accepted_samples) < self.n_samples:
+
+            # randomly draw index values to slice the dataset
+            indices = torch.randint(0, len(dataset), (rolling_batch_size,))
+
+            # get the samples and energies
+            ref_samples = starting_samples[indices]
+            ref_energies = starting_energies[indices]
+
+            # get graphs
+            graph = mol.inference_graph_setup(len(ref_samples))
+
+            # (1) Simulate the Reverse Process
+            z, log_p_bwd_noise, log_p_fwd_noise = sde_integrate_heun(
+                x_init=ref_samples,
+                times=rev_times,
+                graph=graph,
+                vector_field=model,
+                plan=plan,
+                simulate_generative=False, # NOTE: NOT GENERATIVE --- FWD & BWD ARE SWAPPED!!!
+                beta=1.0,
+                zeta=1.0,
+            )
+
+            # (2) Simulat OU Bridge
+            z_prime, log_q_fwd_latents, log_q_bwd_latents = simulate_ou_forward_reverse(
+                z_init=z,
+                n_steps=10,
+                dt=0.1,
+                cold_prior=cold_prior,
+            )
+
+            # (3) Simulate the Annealed Generative Process
+            x_prime, log_p_fwd_gen, log_p_bwd_gen = sde_integrate_heun(
+                x_init=z_prime,
+                times=gen_times,
+                graph=graph,
+                vector_field=model,
+                plan=plan,
+                simulate_generative=True,
+                beta=(T_high / T_low),
+                zeta=1.0,
+            )
+
+            # (4) Evaluate the energies of the proposed samples
+            x_prime_energies = -u_low(angstrom_to_nm(x_prime), return_force=False)
+
+            # (5) Accept/reject the proposed samples
+            accept_mask, log_alpha = ncmc_accept_reject(
+                x_current=ref_samples,
+                x_proposed=x_prime,
+                log_pi_current=-ref_energies,
+                log_pi_proposed=-x_prime_energies,
+                log_fwd_noise=log_p_fwd_noise,
+                log_bwd_noise=log_p_bwd_noise,
+                log_fwd_latents=log_q_fwd_latents,
+                log_bwd_latents=log_q_bwd_latents,
+                log_fwd_gen=log_p_fwd_gen,
+                log_bwd_gen=log_p_bwd_gen,
+            )
+
+            # Log number of samples accepted
+            num_accepted = accept_mask.sum().item()
+            log.info(f"Accepted {num_accepted} out of {rolling_batch_size} samples")
+
+            # Continue if we did not accept any samples
+            if num_accepted == 0:
+                continue
+
+            # Update the accepted samples and energies
+            accepted_samples.extend(angstrom_to_nm(x_prime[accept_mask]).split(1, dim=0))
+            accepted_energies.extend(x_prime_energies[accept_mask].split(1, dim=0))
+
+            # Update the rolling batch size if we are not going to fill 
+            if (self.n_samples - len(accepted_samples)) / rolling_batch_size < 1.0:
+                rolling_batch_size = self.n_samples - len(accepted_samples)
         
-        # model device
-        device = next(model.parameters()).device
-        
-        # system variables
-        dt = 1 / self.n_ncmc_steps
-        beta = self.temp_high / self.temp_low
-        n_atoms = self._context.mol.n_atoms
-        n_chains = len(self._context)
+        # Clear dataset cache and update the dataset
+        dataset.clear_cache()
+        dataset.update_dataset(
+            mol_id=dataset.pdb_id,
+            samples=accepted_samples,
+            energies=accepted_energies,
+        )
 
-        # create a graph with the given categorical features
-        graphs = self._context.mol.inference_graph_setup(len(self._context))
+        # update temperature index
+        self._temperature_index += 1
 
-        # initialize force fields at the two temperature levels
-        force_field_high = force_field_partial(temperature=self.temp_high)
-        force_field_low = force_field_partial(temperature=self.temp_low)
+        # clean up
+        del(accepted_samples, rolling_batch_size, rev_times, gen_times, T_high, T_low, u_low, cold_prior, mol, starting_samples, starting_energies, graph, z, log_p_bwd_noise, log_p_fwd_noise, z_prime, log_q_fwd_latents, log_q_bwd_latents, x_prime, log_p_fwd_gen, log_p_bwd_gen, x_prime_energies, accept_mask, log_alpha)
+        torch.cuda.empty_cache()
+        gc.collect()
 
-        # being loop
-        graphs = graphs.to(device)
-        self._context.dispatch(device)
-        log.info(f"Running NCMC from {self.temp_high}K to {self.temp_low}K ...")
-        while torch.all(~self._context.states):
-
-            # NOTE: chains with state that are set to FALSE are at the high temperature
-            #       and chains with state that are set to TRUE are at the low temperature
-
-            #########################################################################################################################
-            # HIGH TEMPERATURE MALA
-            #########################################################################################################################
-            if torch.any(~self._context.states):
-                # run local MALA steps at the high temperature
-                # > find the high temperature chains and run MALA steps
-                hot_chains = self._context.chains[~self._context.states]
-                # for _ in tqdm(range(self.n_mala_steps), desc=f"High Temperature ({self.temp_high}K) MALA Steps"):
-                #     hot_chains = mala_transition_kernel_step(
-                #         step_size=self.mala_step_size,
-                #         x=hot_chains,
-                #         force_field=force_field_high,
-                #     )
-                self._context.update_chains(~self._context.states, hot_chains)
-            
-            #########################################################################################################################
-            # Non-Equilibrium Switches
-            #########################################################################################################################
-
-            # (1) Sample the protocol times
-            protocol_times = self.sample_times()
-            # protocol_times: (n_chains, )
-
-            # (2) Sample the protocol noise
-            n_hot_chains = hot_chains.size(0)
-            z = torch.randn((n_hot_chains * n_atoms, 3), device=device)
-            z = scatter_center_mol(z, graphs).view(n_hot_chains, n_atoms * 3)
-            # z: (n_chains, n_atoms * 3)
-
-            # (3) draw x(t)
-            alpha_t = plan.alpha_t(protocol_times).view(-1, 1)
-            sigma_t = plan.sigma_t(protocol_times).view(-1, 1)
-            x_t = alpha_t * hot_chains + sigma_t * z
-            # x_t: (n_chains, n_atoms * 3)
-
-
-            #########################################################################################################################
-            # LOW TEMPERATURE MALA
-            #########################################################################################################################
-            if torch.any(self._context.states):
-                # run local MALA steps at the low temperature
-                # > find the low temperature chains and run MALA steps
-                low_temperature_chains = self._context.chains[self._context.states]
-                # for _ in tqdm(range(self.n_mala_steps), desc=f"Low Temperature ({self.temp_low}K) MALA Steps"):
-                #     low_temperature_chains = mala_transition_kernel_step(
-                #         step_size=self.mala_step_size,
-                #         x=low_temperature_chains,
-                #         force_field=force_field_low,
-                #     )
-                self._context.update_chains(self._context.states, low_temperature_chains)
+        # return energies for plotting
+        return torch.cat(accepted_energies, dim=0)

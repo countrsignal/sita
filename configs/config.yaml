@@ -10,6 +10,7 @@ defaults:
   - interpolant: default
   - pipeline: null
   - energy: null
+  - ncmc: null
   - ebm: null
   - flow: null
   - optimizer: null

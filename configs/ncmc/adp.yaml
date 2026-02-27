@@ -1,0 +1,5 @@
+_target_: aita.ncmc.NonequilibriumCandidateMonteCarlo
+n_samples: 50_000
+batch_size: 10_000
+n_timesteps: 100
+temperature_ladder: [[1200.00, 755.95], [755.95, 555.52], [555.52, 300.00]]
