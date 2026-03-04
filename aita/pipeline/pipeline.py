@@ -1,16 +1,20 @@
 import dgl
 import torch
+from typing import Optional
 
 import hydra
 from omegaconf import DictConfig
 
+import gc
 from tqdm import tqdm
 from abc import ABC, abstractmethod
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Tuple
 
 from ..data.molecule import Molecule
 from ..interpolants import Interpolant
 from ..utils.logging import RankedLogger
+from ..utils.data_utils import angstrom_to_nm
+from ..energies.base_molecule_energy_function import BaseMoleculeEnergy
 
 
 log = RankedLogger(__name__, on_rank_zero=True)
@@ -138,3 +142,90 @@ class Pipeline:
                 samples_th.append(batch_samples.detach().cpu())
         results_dict[mol.name] = {"samples": torch.cat(samples_th, dim=0)}
         return results_dict
+
+
+    @staticmethod
+    def evaluate_log_probs(
+        batch_size: int,
+        mol: Molecule,
+        samples: torch.Tensor,
+        ebm: torch.nn.Module,
+        forcefield: Optional[BaseMoleculeEnergy] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Evaluate the log probabilities of both the EBM and the forcefield.
+
+        Args:
+            ebm: EBM model.
+            loader: Data loader.
+            device: Device.
+            forcefield: Forcefield.
+
+        Returns:
+            log_probs: Log probabilities of the samples.
+            energies: Energies of the samples.
+        """
+
+        assert (samples.size(0) % batch_size) == 0, "Total number of samples must be divisible by `batch_size`"
+
+        # set model to evaluation mode
+        if ebm.training:
+            ebm.eval();
+        
+        # reshape the samples to (batch_size, num_atoms, 3)
+        if samples.dim() == 2:
+            samples = samples.reshape(-1, mol.n_atoms, 3)
+
+        # get device id from EBM model
+        device = next(ebm.parameters()).device
+
+        # prepare features, padding mask, and times
+        features = mol.atom_types.argmax(dim=1).unsqueeze(0).repeat(batch_size, 1)
+        padding_mask = torch.zeros_like(features, dtype=torch.bool)
+        times = torch.ones((batch_size, samples.size(1), 1))
+
+        # move to device
+        features = features.to(device)
+        padding_mask = padding_mask.to(device)
+        times = times.to(device)
+
+        # break samples into batches
+        batches = samples.split(batch_size, dim=0) # DO NOT USE CHUNK HERE!
+
+        # evaluate EBM
+        log_probs_ebm: List[torch.Tensor] = []
+        log_probs_ffd: List[torch.Tensor] = []
+        for batch in tqdm(batches, desc="Evaluating log-probabilities"):
+
+            # move batch to device
+            batch = batch.to(device)
+
+            with torch.no_grad():
+                # evaluate EBM
+                log_p_ebm = ebm(
+                    time=times,
+                    features=features,
+                    coordinates=batch,
+                    padding_mask=padding_mask,
+                    return_logprob=True,
+                    require_grad=False,
+                )
+
+                # evaluate forcefield
+                log_p_ffd = forcefield(angstrom_to_nm(batch.reshape(-1, mol.n_atoms * 3)), return_force=False)
+
+            # append log probabilities
+            log_probs_ebm.append(log_p_ebm.cpu().flatten())
+            log_probs_ffd.append(log_p_ffd.cpu().flatten())
+
+        # concatenate log probabilities
+        log_probs_ebm = torch.cat(log_probs_ebm, dim=-1)
+        log_probs_ffd = torch.cat(log_probs_ffd, dim=-1)
+
+        # clean up memory
+        del(batch, features, padding_mask, times, log_p_ebm, log_p_ffd)
+        torch.cuda.empty_cache()
+        gc.collect()
+
+        # return log probabilities
+        return log_probs_ebm, log_probs_ffd

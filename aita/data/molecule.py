@@ -153,10 +153,30 @@ class ADP(Molecule):
         )
 
 
+@dataclass
+class ATP(Molecule):
+
+    @staticmethod
+    def from_pdb(pdb_path: str) -> "ATP":
+        mol = Chem.MolFromPDBFile(pdb_path, removeHs=False, sanitize=False)
+        assert mol is not None, f"Failed to parse PDB file {pdb_path}"
+        atom_dict, bond_dict = parse_mol_rdkit(mol)
+        residue_type_one_hot, atom_one_hot = DEBUG_FEATURIZERS["alanine_tripeptide"](return_concat=False)
+        return ATP(
+            name=Path(pdb_path).stem,
+            atom_dict=atom_dict,
+            bond_dict=bond_dict,
+            res_types=residue_type_one_hot,
+            atom_types=atom_one_hot,
+            atom_indices=torch.arange(len(atom_dict)),
+        )
+
+
 ###################################
 # Constants
 ###################################
 
 DEBUG_MOLECULES = {
     "alanine_dipeptide": ADP,
+    "alanine_tripeptide": ATP,
 }

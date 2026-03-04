@@ -38,7 +38,7 @@ class SimulationDataset(Dataset):
           We convert to angstroms for training in aita.interpolants.Interpolant class.
     """
 
-    def __init__(self, data_path: str, param: str, anneal_type: str, split_json_filename: Optional[str], debug_molecule: Optional[str] = None):
+    def __init__(self, data_path: str, param: str, anneal_type: str, split_json_filename: Optional[str] = None, debug_molecule: Optional[str] = None):
         super(SimulationDataset, self).__init__()
 
         assert anneal_type in ["alchemical", "temperature"], "Anneal type must be either 'alchemical' or 'temperature'"

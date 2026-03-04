@@ -9,6 +9,10 @@ from ..utils.data_utils import angstrom_to_nm
 from ..energies.base_molecule_energy_function import BaseMoleculeEnergy
 
 
+###################################
+# functions
+###################################
+
 def fetch_wandb_logger(loggers) -> WandbLogger:
     wandb_logger = None
     for logger in loggers:
@@ -25,6 +29,10 @@ def eval_ebm_single_molecule(
     device: torch.device,
     forcefield: Optional[BaseMoleculeEnergy] = None,
 ):
+    """
+    Evaluates the EBM on a dataset composed of a single molecular species.
+    """
+
     assert len(loader.dataset.molecules) == 1, "Only one molecule evaluation is supported."
 
     # set model to evaluation mode

@@ -128,6 +128,30 @@ def get_adp_features(return_concat: bool = True):
         return residue_type, atom_types
 
 
+def get_atp_features(return_concat: bool = True):
+    """
+    Get the features for the alanine tripeptide molecule.
+
+    Args:
+        return_concat: whether to return the concatenated features or not
+    """
+    atom_types = torch.arange(33)
+    atom_types[[1, 2, 3]] = 2
+    atom_types[[7, 8, 9]] = 8
+    atom_types[[17, 18, 19]] = 18
+    atom_types[[27, 28, 29]] = 28
+    atom_types = torch.nn.functional.one_hot(atom_types)
+    residue_type = torch.arange(33)
+    residue_type[:12] = 0
+    residue_type[12:22] = 1
+    residue_type[22:] = 2
+    residue_type = torch.nn.functional.one_hot(residue_type)
+    if return_concat:
+        return torch.cat([residue_type, atom_types], dim=1)
+    else:
+        return residue_type, atom_types
+
+
 def _normalise_atom_name(atom_name: str, residue_code: int) -> str:
     """Apply legacy normalisation rules for atom names.
 
@@ -468,4 +492,5 @@ def build_dgl_edge_features(
 
 DEBUG_FEATURIZERS = {
     "alanine_dipeptide": get_adp_features,
+    "alanine_tripeptide": get_atp_features,
 }
