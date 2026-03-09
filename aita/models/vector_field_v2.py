@@ -103,6 +103,9 @@ class VFV2(nn.Module):
 
         return velocity
     
+    def inference_fwd(self, graph: dgl.DGLGraph) -> torch.Tensor:
+        return self(graph)
+    
     def training_step(self, graph: dgl.DGLGraph) -> dict[str, torch.Tensor]:
         # predict the vector field
         velocity = self(graph)

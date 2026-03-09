@@ -1,8 +1,11 @@
 import torch
 from torch import nn, Tensor
+from typing import Tuple
 
-from ..layers.layernorm import AdaLN
-from ..layers.embeddings import FourierEmbedding, PositionalEncoding
+from ..layers.primitives import LinearNoBias
+from ..layers.layernorm import LayerNormEps, AdaLN
+from ..layers.transition import ResidualTransition
+from ..layers.embeddings import FourierEmbedding, PositionalEncoding, PairEmbedding
 
 
 @torch.compile
@@ -76,3 +79,83 @@ class AtomEncoderTempered(nn.Module):
         zs = self.time_to_attr(zs, th) + self.temperature_to_attr(zs, bh)
         # zs: (N, n_hidden)
         return zs
+
+
+class AtomicEncoder(nn.Module):
+
+    def __init__(
+        self,
+        node_feats_in: int,
+        edge_feats_in: int,
+        c_atoms: int,
+        c_pairs: int,
+        dropout_prob: float = 0.0,
+    ) -> None:
+
+        super().__init__()
+
+        self.node_feats_in = node_feats_in
+        self.edge_feats_in = edge_feats_in
+        self.c_atoms = c_atoms
+        self.c_pairs = c_pairs
+        self.dropout_prob = dropout_prob
+
+        self.xyz_embedder  = LinearNoBias(3, c_atoms)
+        self.attr_embedder = AtomEncoder(
+            n_features=node_feats_in,
+            n_hidden=c_atoms,
+        )
+        self.atom_embedder = nn.Sequential(
+            LinearNoBias(2 * c_atoms, c_atoms),
+            nn.SiLU(),
+        )
+        self.pair_embedder = PairEmbedding(
+            edge_feats_in=edge_feats_in,
+            edge_feats_out=c_pairs,
+            dropout_prob=dropout_prob,
+        )
+        self.message_proj = LinearNoBias(c_pairs, c_atoms)
+        self.interaction_residual = ResidualTransition(dim=c_atoms, hidden=c_atoms, dropout_prob=dropout_prob)
+    
+    def forward(
+        self,
+        x_t: Tensor,
+        time: Tensor,
+        attr: Tensor,
+        atom_index: Tensor,
+        edge_feats: Tensor,
+        atom_mask: Tensor,
+        edge_mask: Tensor,
+    ) -> Tuple[Tensor, Tensor]:
+
+        # Latent vectors based on initial coordinates
+        x_h = self.xyz_embedder(x_t)
+        # x_h: (batch_size, n_atoms, c_atoms)
+
+        # Latent vectors based on atom attributes
+        attr_init = self.attr_embedder(time=time, attr=attr, atom_index=atom_index)
+        # attr_init: (batch_size, n_atoms, c_atoms)
+
+        # Combine all node features
+        x_h = self.atom_embedder(torch.cat([x_h, attr_init], dim=-1))
+        # x_h: (batch_size, n_atoms, c_atoms)
+
+        # Apply atom mask
+        x_h = x_h * atom_mask.unsqueeze(-1)
+
+        # Embed the edge features
+        edge_repr = self.pair_embedder(edge_feats=edge_feats, edge_mask=edge_mask)
+        # edge_repr: (batch_size, n_edges, c_pairs)
+
+        # Project the edge features to the atom features
+        edge_repr = self.message_proj(edge_repr)
+        # edge_repr: (batch_size, n_edges, c_atoms)
+
+        # Aggregate the edge features to the atom features
+        x_h = self.interaction_residual(x_h, edge_repr)
+        # x_h: (batch_size, n_atoms, c_atoms)
+
+        # Apply node mask
+        x_h = x_h * atom_mask.unsqueeze(-1)
+
+        return x_h, edge_repr

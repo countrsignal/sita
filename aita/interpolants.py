@@ -42,7 +42,7 @@ class Interpolant:
         # NOTE: we assume the provided dgl graph already contains the categorical features
         g.ndata["xt"] = x.view(g.num_nodes(), 3) # [batch_size * num_nodes, 3]
         g.ndata["t"] = t * torch.ones((g.num_nodes(), 1), device=g.device) # [batch_size * num_nodes, 1]
-        velocity = model(g)
+        velocity = model.inference_fwd(g)
 
         # reshape velocity to (batch_size, n_particles * 3)
         n_particles = g.num_nodes() // g.batch_size # it is expected that we only generate conformers for one molecular species at a time
@@ -63,7 +63,7 @@ class Interpolant:
         # NOTE: we assume the provided dgl graph already contains the categorical features
         g.ndata["xt"] = x.view(g.num_nodes(), 3) # [batch_size * num_nodes, 3]
         g.ndata["t"] = t * torch.ones((g.num_nodes(), 1), device=g.device) # [batch_size * num_nodes, 1]
-        velocity = model(g)
+        velocity = model.inference_fwd(g)
 
         # reshape velocity to (batch_size, n_particles * 3)
         n_particles = g.num_nodes() // g.batch_size # it is expected that we only generate conformers for one molecular species at a time

@@ -1,0 +1,65 @@
+import torch
+from torch import nn, Tensor
+from typing import Tuple
+
+from .modules.encoders import AtomicEncoder
+from .modules.decoders import AtomicDecoder
+
+
+class AtomicTransformer(nn.Module):
+    def __init__(
+        self,
+        node_feats_in: int,
+        edge_feats_in: int,
+        n_vecs: int,
+        c_atoms: int,
+        c_pairs: int,
+        n_heads: int = 8,
+        n_layers: int = 5,
+        dropout_prob: float = 0.0,
+        bias: bool = False,
+        initial_norm: bool = True,
+    ) -> None:
+        super().__init__()
+
+        self.encoder = AtomicEncoder(
+            node_feats_in=node_feats_in,
+            edge_feats_in=edge_feats_in,
+            c_atoms=c_atoms,
+            c_pairs=c_pairs,
+            dropout_prob=dropout_prob,
+        )
+        self.decoder = AtomicDecoder(
+            n_vecs=n_vecs,
+            c_atoms=c_atoms,
+            n_heads=n_heads,
+            n_layers=n_layers,
+            dropout_prob=dropout_prob,
+            bias=bias,
+            initial_norm=initial_norm,
+        )
+    
+    def forward(
+        self,
+        x_t: Tensor,
+        time: Tensor,
+        attr: Tensor,
+        atom_index: Tensor,
+        edge_feats: Tensor,
+        atom_mask: Tensor,
+        edge_mask: Tensor,
+    ) -> Tuple[Tensor, Tensor, Tensor]:
+        x_h, edge_repr = self.encoder(
+            x_t=x_t,
+            time=time,
+            attr=attr,
+            atom_index=atom_index,
+            edge_feats=edge_feats,
+            atom_mask=atom_mask,
+            edge_mask=edge_mask,
+        )
+        velocity, x_h = self.decoder(
+            x_h=x_h,
+            atom_mask=atom_mask,
+        )
+        return velocity, x_h, edge_repr

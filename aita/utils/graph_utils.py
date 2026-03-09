@@ -342,10 +342,12 @@ class GraphAdapter:
             >= self.num_nodes_per_graph.to(self.device).unsqueeze(1)
         )
         pair_mask = node_pad.unsqueeze(2) | node_pad.unsqueeze(1)
+        pair_mask = pair_mask | torch.eye(max_n, device=self.device, dtype=torch.bool).unsqueeze(0)
         rbf_features = rbf_features.masked_fill(pair_mask.unsqueeze(-1), 0.0)
 
         return rbf_features, pair_mask
 
+    @torch.no_grad()
     def graph_to_padded_tensor(
         self,
         g: dgl.DGLGraph,
@@ -399,9 +401,11 @@ class GraphAdapter:
         padded_edges, pair_mask = edges_to_pair_tensor(g.edata[feat_key_edges], g)
 
         padded_coords = nodes_to_padded_tensor(g.ndata[coord_key], g)
-        rbf_feats, _ = self.compute_rbf_edge_features(
+        rbf_feats, rbf_mask = self.compute_rbf_edge_features(
             padded_coords, D_min=D_min, D_max=D_max, D_count=D_count,
         )
+        pair_mask = rbf_mask  # includes both padding and diagonal
         padded_edges = torch.cat([padded_edges, rbf_feats], dim=-1)
+        # padded_edges = padded_edges.masked_fill(pair_mask.unsqueeze(-1), 0.0)
 
         return padded_nodes, padded_edges, node_mask, pair_mask

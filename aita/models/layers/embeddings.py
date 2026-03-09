@@ -4,6 +4,14 @@ import torch
 from torch import nn, Tensor
 from einops import rearrange
 
+from .primitives import LayerNormEps
+from .transition import ResidualTransition
+from .pair_dropout import get_dropout_mask
+from .triangular_mult import (
+    TriangleMultiplicationIncoming,
+    TriangleMultiplicationOutgoing,
+)
+
 
 class FourierEmbedding(nn.Module):
     """Fourier embedding layer."""
@@ -45,3 +53,49 @@ class PositionalEncoding(nn.Module):
         embeddings = h[:, None] * embeddings[None, :]
         embeddings = torch.cat((embeddings.sin(), embeddings.cos()), dim=-1)
         return embeddings
+
+
+
+class PairEmbedding(nn.Module):
+    
+    def __init__(
+        self,
+        edge_feats_in: int,
+        edge_feats_out: int,
+        dropout_prob: float,
+    ):
+        super(PairEmbedding, self).__init__()
+
+        self.dropout_prob = dropout_prob
+        self.mlp = nn.Sequential(
+            nn.Linear(edge_feats_in, edge_feats_out, bias=True),
+            nn.SiLU(),
+            nn.Linear(edge_feats_out, edge_feats_out, bias=True)
+        )
+        self.tri_mul_in = TriangleMultiplicationIncoming(
+            c_pairs=edge_feats_out,
+        )
+        self.tri_mul_out = TriangleMultiplicationOutgoing(
+            c_pairs=edge_feats_out,
+        )
+        self.residual_update = ResidualTransition(edge_feats_out, hidden=edge_feats_out, dropout_prob=0.0)
+    
+    def forward(self, pair_features: Tensor, pair_mask: Tensor):
+
+        # MLP for edge features
+        pair_repr = self.mlp(pair_features) * pair_mask
+        # pair_repr: (batch_size, num_nodes, num_nodes, edge_feats_out)
+
+        # Triangular multiplication for incoming and outgoing messages
+        tmi = self.tri_mul_in(pair_repr=pair_repr)
+        tmo = self.tri_mul_out(pair_repr=pair_repr)
+
+        # Apply dropout to both updates
+        drop_row = get_dropout_mask(self.dropout_prob, tmi, self.training, columnwise=False)
+        tmi = drop_row * tmi
+
+        drop_row = get_dropout_mask(self.dropout_prob, tmo, self.training, columnwise=False)
+        tmo = drop_row * tmo
+
+        # Final residual update combining the original representation with the transformed update.
+        return self.residual_update(x=pair_repr, attn_out=tmi + tmo)
