@@ -84,7 +84,7 @@ class SimulationDataset(Dataset):
                 pdb_file = self.data_path / "pdbs" / f"{molecule}.pdb"
             # load MD trajectory
             traj = md.load(dcd_file, top=pdb_file)
-            # process coordinates data
+            # process coordinates data in nanometers to have ZERO center of mass
             coords_tensor = torch.from_numpy(traj.xyz).float()
             coords_tensor = coords_tensor - coords_tensor.mean(dim=1, keepdim=True)
             coords_tensor = torch.chunk(coords_tensor, traj.n_frames, dim=0) # this is a list of tensors, each with shape (1, n_atoms, 3)

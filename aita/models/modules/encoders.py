@@ -2,8 +2,8 @@ import torch
 from torch import nn, Tensor
 from typing import Tuple
 
+from ..layers.layernorm import AdaLN
 from ..layers.primitives import LinearNoBias
-from ..layers.layernorm import LayerNormEps, AdaLN
 from ..layers.transition import ResidualTransition
 from ..layers.embeddings import FourierEmbedding, PositionalEncoding, PairEmbedding
 
@@ -81,6 +81,39 @@ class AtomEncoderTempered(nn.Module):
         return zs
 
 
+class AttributeEncoder(nn.Module):
+
+    def __init__(
+        self,
+        n_features: int,
+        n_hidden: int,
+    ) -> None:
+        super().__init__()
+
+        self.temporal_embedding   = FourierEmbedding(n_hidden)
+        self.positional_embedding = PositionalEncoding(n_hidden)
+        self.initial_embedding = nn.Sequential(
+            nn.Linear(n_features + n_hidden, n_hidden),
+            nn.SiLU(),
+        )
+        self.time_to_attr = AdaLN(n_hidden, n_hidden)
+    
+    def forward(self, time: Tensor, attr: Tensor, atom_index: Tensor) -> Tensor:
+        # NOTE: we expect the atom index and time to be a 1D tensors of shape (N,)
+        #       and the attribute tensor to be a 3D tensor of shape (B, L, n_features)
+        th = self.temporal_embedding(time)
+        # th: (B, L, n_hidden)
+        ph = self.positional_embedding(atom_index.view(-1)).reshape(atom_index.size(0), atom_index.size(1), -1)
+        # ph: (B, L, n_hidden)
+        z_init = torch.cat([attr, ph], dim=-1)
+        # z_init: (B, L, n_features + n_hidden)
+        zs = self.initial_embedding(z_init)
+        # zs: (B, L, n_hidden)
+        zs = self.time_to_attr(zs, th)
+        # zs: (B, L, n_hidden)
+        return zs
+
+
 class AtomicEncoder(nn.Module):
 
     def __init__(
@@ -101,7 +134,7 @@ class AtomicEncoder(nn.Module):
         self.dropout_prob = dropout_prob
 
         self.xyz_embedder  = LinearNoBias(3, c_atoms)
-        self.attr_embedder = AtomEncoder(
+        self.attr_encoder = AttributeEncoder(
             n_features=node_feats_in,
             n_hidden=c_atoms,
         )
@@ -133,7 +166,11 @@ class AtomicEncoder(nn.Module):
         # x_h: (batch_size, n_atoms, c_atoms)
 
         # Latent vectors based on atom attributes
-        attr_init = self.attr_embedder(time=time, attr=attr, atom_index=atom_index)
+        attr_init = self.attr_encoder(
+            time=time,
+            attr=attr,
+            atom_index=atom_index,
+        )
         # attr_init: (batch_size, n_atoms, c_atoms)
 
         # Combine all node features
@@ -144,15 +181,15 @@ class AtomicEncoder(nn.Module):
         x_h = x_h * atom_mask.unsqueeze(-1)
 
         # Embed the edge features
-        edge_repr = self.pair_embedder(edge_feats=edge_feats, edge_mask=edge_mask)
-        # edge_repr: (batch_size, n_edges, c_pairs)
+        edge_repr = self.pair_embedder(pair_features=edge_feats, pair_mask=edge_mask)
+        # edge_repr: (batch_size, n_atoms, n_atoms, c_pairs)
 
         # Project the edge features to the atom features
-        edge_repr = self.message_proj(edge_repr)
-        # edge_repr: (batch_size, n_edges, c_atoms)
+        msgs = self.message_proj(edge_repr.sum(dim=-2))
+        # msgs: (batch_size, n_atoms, c_atoms)
 
         # Aggregate the edge features to the atom features
-        x_h = self.interaction_residual(x_h, edge_repr)
+        x_h = self.interaction_residual(x_h, msgs)
         # x_h: (batch_size, n_atoms, c_atoms)
 
         # Apply node mask

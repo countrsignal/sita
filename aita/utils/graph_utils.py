@@ -352,37 +352,54 @@ class GraphAdapter:
         self,
         g: dgl.DGLGraph,
         coord_key: str = "xt",
+        target_key: str = "vt",
         feat_key_nodes: str = "attr",
         feat_key_edges: str = "attr",
         D_min: float = 0.,
         D_max: float = 20.,
         D_count: int = 16,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        return_sigma_t: bool = False,
+    ) -> Tuple[torch.Tensor, ...]:
         """
         Pad node and edge features from a batched DGLGraph into dense tensors,
         appending RBF-encoded pairwise distances to the edge features.
 
         Args:
             g: Batched DGLGraph.
-            feat_key_nodes: Key in ``g.ndata`` for the node features.
-            feat_key_edges: Key in ``g.edata`` for the edge features.
             coord_key: Key in ``g.ndata`` for 3-D coordinates used by the
                 RBF distance encoding.
+            target_key: Key in ``g.ndata`` for the regression targets.
+            feat_key_nodes: Key in ``g.ndata`` for the node features.
+            feat_key_edges: Key in ``g.edata`` for the edge features.
             D_min: Minimum distance for RBF centres.
             D_max: Maximum distance for RBF centres.
             D_count: Number of RBF basis functions.
+            return_sigma_t: If ``True``, also return the padded noise scale
+                ``sigma_t`` from ``g.ndata['sigma_t']``.
 
         Returns:
+            padded_targets: ``(batch_size, N_max, 3)`` — regression targets
+                from ``g.ndata[target_key]``.
+            padded_times: ``(batch_size, N_max, 1)`` — diffusion times from
+                ``g.ndata['t']``.
+            padded_atom_index: ``(batch_size, N_max, 1)`` — per-atom type
+                indices from ``g.ndata['atom_index']``.
             padded_nodes: ``(batch_size, N_max, node_feat_dim)``.
             padded_edges: ``(batch_size, N_max, N_max, edge_feat_dim + D_count)``
                 with RBF distance features concatenated along the last axis.
             node_mask: ``(batch_size, N_max)`` — ``True`` at padding positions.
             pair_mask: ``(batch_size, N_max, N_max)`` — ``True`` at padding
                 positions.
+            padded_sigma_t: ``(batch_size, N_max, 1)`` — noise scale
+                (only included when ``return_sigma_t=True``).
         """
-        node_feats = g.ndata[feat_key_nodes]
+        node_feats = g.ndata[feat_key_nodes]  # (total_nodes, node_feat_dim)
         max_n = int(self.num_nodes_per_graph.max().item())
 
+        # Scatter node features into a dense (batch_size, N_max, node_feat_dim)
+        # tensor. `offsets` gives the starting global index of each graph's
+        # nodes, and `local_idx` converts global node indices to positions
+        # within each graph (0 .. n_i-1).
         padded_nodes = node_feats.new_zeros(
             self.batch_size, max_n, node_feats.size(-1)
         )
@@ -393,13 +410,24 @@ class GraphAdapter:
         )
         padded_nodes[self.batch_ids_nodes, local_idx] = node_feats
 
+        # Pad per-node atom type indices into (batch_size, N_max, 1).
+        atom_index = g.ndata["atom_index"]
+        padded_atom_index = atom_index.new_zeros(self.batch_size, max_n, 1)
+        padded_atom_index[self.batch_ids_nodes, local_idx] = atom_index.unsqueeze(-1)
+
+        # Boolean mask marking padding positions as True so that attention
+        # layers can ignore them. Shape: (batch_size, N_max).
         node_mask = (
             torch.arange(max_n, device=self.device).unsqueeze(0)
             >= self.num_nodes_per_graph.unsqueeze(1)
         )
 
+        # Convert sparse edge features to a dense pair tensor
+        # (batch_size, N_max, N_max, edge_feat_dim).
         padded_edges, pair_mask = edges_to_pair_tensor(g.edata[feat_key_edges], g)
 
+        # Compute RBF-encoded pairwise distances from padded 3-D coordinates
+        # and concatenate them to the edge features along the last axis.
         padded_coords = nodes_to_padded_tensor(g.ndata[coord_key], g)
         rbf_feats, rbf_mask = self.compute_rbf_edge_features(
             padded_coords, D_min=D_min, D_max=D_max, D_count=D_count,
@@ -408,4 +436,25 @@ class GraphAdapter:
         padded_edges = torch.cat([padded_edges, rbf_feats], dim=-1)
         # padded_edges = padded_edges.masked_fill(pair_mask.unsqueeze(-1), 0.0)
 
-        return padded_nodes, padded_edges, node_mask, pair_mask
+        # Pad regression targets (x1 coordinates) into (batch_size, N_max, 3).
+        padded_targets = nodes_to_padded_tensor(g.ndata[target_key], g)
+
+        # Pad per-node flow / diffusion times into (batch_size, N_max, 1), reusing the
+        # same local_idx mapping computed above for the node features.
+        times = g.ndata["t"]
+        padded_times = times.new_zeros(self.batch_size, max_n, 1)
+        padded_times[self.batch_ids_nodes, local_idx] = times
+
+        # Return the padded tensors
+        result = (padded_targets, padded_times, padded_coords, padded_nodes, padded_atom_index, padded_edges, ~node_mask, ~pair_mask)
+        # NOTE: the MASK TENSORS for both nodes and edges indicate 
+        #       padding positions as FALSE and non-padding positions as TRUE
+
+        if return_sigma_t:
+            # Pad per-node noise scale into (batch_size, N_max, 1).
+            sigma_t = g.ndata["sigma_t"]
+            padded_sigma_t = sigma_t.new_zeros(self.batch_size, max_n, sigma_t.size(-1))
+            padded_sigma_t[self.batch_ids_nodes, local_idx] = sigma_t
+            result = result + (padded_sigma_t,)
+
+        return result

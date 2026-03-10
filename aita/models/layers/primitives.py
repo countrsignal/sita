@@ -3,7 +3,7 @@ import torch.nn.functional as F
 
 from functools import partial
 
-from .layer_norms import SafeLayerNorm
+from .layernorm import SafeLayerNorm
 
 
 sdpa = F.scaled_dot_product_attention

@@ -6,7 +6,6 @@ from .primitives import LayerNormEps
 from .transition import ResidualTransition
 
 
-
 class AttentionBlock(nn.Module):
 
     def __init__(

@@ -244,10 +244,6 @@ class VelocityUpdate(nn.Module):
         else:
             gating = _norm_no_nan(Vu, axis=-1).unsqueeze(-1)
 
-        if self.n_vecs_out == 1:
-            vector_norms = _norm_no_nan(Vu, axis=-1).unsqueeze(-1)
-            Vu = Vu / vector_norms
-
         vectors_out = self.vectors_activation(gating) * Vu
         vectors_out = vectors_out * atom_mask[..., None, None]
         feats_out = feats_out * atom_mask.unsqueeze(-1)
@@ -301,7 +297,7 @@ class AtomicDecoder(nn.Module):
                     n_vecs=n_vecs,
                     c_atoms=c_atoms,
                     n_vecs_out=1 if idx == n_layers - 1 else n_vecs,
-                    vectors_activation=nn.Sigmoid,
+                    vectors_activation=nn.Sigmoid(),
                     vector_gating=True,
                 )
             )
@@ -330,10 +326,10 @@ class AtomicDecoder(nn.Module):
             # vfs_update: (..., n_vecs, 3)
             
             vfs = vfs + vfs_update
-            vfs = self.velocity_layernorms[idx](vfs)
+            vfs = self.velocity_layernorms[idx](vfs, atom_mask)
 
         x_h = self.attention_blocks[-1](x_h, atom_mask)
         velocity, x_h = self.velocity_updates[-1](vfs, x_h, atom_mask)
         # velocity: (..., 3)
 
-        return velocity, x_h
+        return velocity.squeeze(-2), x_h

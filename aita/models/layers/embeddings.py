@@ -35,16 +35,19 @@ class FourierEmbedding(nn.Module):
         self,
         times: torch.Tensor,
     ):
-        times = rearrange(times, "b -> b 1")
+        if times.dim() == 1:
+            times = rearrange(times, "b -> b 1")
+
         rand_proj = self.proj(times)
         return torch.cos(2 * pi * rand_proj)
 
 
 class PositionalEncoding(nn.Module):
+
     def __init__(self, dim):
         super().__init__()
         self.dim = dim
-        
+
     def forward(self, h: torch.Tensor) -> torch.Tensor:
         device = h.device
         half_dim = self.dim // 2
@@ -53,7 +56,6 @@ class PositionalEncoding(nn.Module):
         embeddings = h[:, None] * embeddings[None, :]
         embeddings = torch.cat((embeddings.sin(), embeddings.cos()), dim=-1)
         return embeddings
-
 
 
 class PairEmbedding(nn.Module):
@@ -83,7 +85,7 @@ class PairEmbedding(nn.Module):
     def forward(self, pair_features: Tensor, pair_mask: Tensor):
 
         # MLP for edge features
-        pair_repr = self.mlp(pair_features) * pair_mask
+        pair_repr = self.mlp(pair_features) * pair_mask.unsqueeze(-1)
         # pair_repr: (batch_size, num_nodes, num_nodes, edge_feats_out)
 
         # Triangular multiplication for incoming and outgoing messages
