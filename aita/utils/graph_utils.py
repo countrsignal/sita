@@ -4,6 +4,8 @@ from torch.nn.utils.rnn import pad_sequence
 
 from typing import Tuple, Optional
 
+from .random_rotations import randomly_rotate
+
 
 ###################################
 # functions
@@ -310,10 +312,10 @@ class GraphAdapter:
         D_min: float = 0.,
         D_max: float = 20.,
         D_count: int = 16,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Build RBF-encoded pairwise distance features from an already-padded
-        coordinate tensor.
+        Build RBF-encoded pairwise distance features and displacement vectors
+        from an already-padded coordinate tensor.
 
         Args:
             padded_coords: Padded node coordinates, shape
@@ -326,13 +328,19 @@ class GraphAdapter:
             rbf_features: Dense pairwise RBF features, shape
                 ``(batch_size, max_num_nodes, max_num_nodes, D_count)``.
                 Padded positions are zeroed out.
+            displacements: Unit-length pairwise displacement vectors
+                ``(x_j - x_i) / ||x_j - x_i||``, shape
+                ``(batch_size, max_num_nodes, max_num_nodes, 3)``.
+                Padded positions are zeroed out.
             pair_mask: Boolean mask, shape
                 ``(batch_size, max_num_nodes, max_num_nodes)``.
                 ``True`` where either the row or column index falls outside
                 the molecule's real node count (i.e. padding).
         """
-        # (B, N, 1, 3) - (B, 1, N, 3) -> norm -> (B, N, N)
-        distances = (padded_coords.unsqueeze(2) - padded_coords.unsqueeze(1)).norm(dim=-1)
+        # (B, N, 1, 3) - (B, 1, N, 3) -> (B, N, N, 3)
+        displacements = padded_coords.unsqueeze(2) - padded_coords.unsqueeze(1)
+        distances = displacements.norm(dim=-1)  # (B, N, N)
+        displacements = displacements / (distances.unsqueeze(-1) + 1e-8)
 
         rbf_features = rbf(distances, D_min=D_min, D_max=D_max, D_count=D_count)
 
@@ -344,21 +352,23 @@ class GraphAdapter:
         pair_mask = node_pad.unsqueeze(2) | node_pad.unsqueeze(1)
         pair_mask = pair_mask | torch.eye(max_n, device=self.device, dtype=torch.bool).unsqueeze(0)
         rbf_features = rbf_features.masked_fill(pair_mask.unsqueeze(-1), 0.0)
+        displacements = displacements.masked_fill(pair_mask.unsqueeze(-1), 0.0)
 
-        return rbf_features, pair_mask
+        return rbf_features, displacements, pair_mask
 
     @torch.no_grad()
     def graph_to_padded_tensor(
         self,
         g: dgl.DGLGraph,
         coord_key: str = "xt",
-        target_key: str = "vt",
+        target_key: Optional[str] = "vt",
         feat_key_nodes: str = "attr",
         feat_key_edges: str = "attr",
         D_min: float = 0.,
         D_max: float = 20.,
         D_count: int = 16,
         return_sigma_t: bool = False,
+        apply_random_rotations: bool = False,
     ) -> Tuple[torch.Tensor, ...]:
         """
         Pad node and edge features from a batched DGLGraph into dense tensors,
@@ -369,6 +379,8 @@ class GraphAdapter:
             coord_key: Key in ``g.ndata`` for 3-D coordinates used by the
                 RBF distance encoding.
             target_key: Key in ``g.ndata`` for the regression targets.
+                Set to ``None`` at inference time to omit
+                ``padded_targets`` from the returned tuple.
             feat_key_nodes: Key in ``g.ndata`` for the node features.
             feat_key_edges: Key in ``g.edata`` for the edge features.
             D_min: Minimum distance for RBF centres.
@@ -376,17 +388,19 @@ class GraphAdapter:
             D_count: Number of RBF basis functions.
             return_sigma_t: If ``True``, also return the padded noise scale
                 ``sigma_t`` from ``g.ndata['sigma_t']``.
-
+            apply_random_rotations: If ``True``, apply random rotations to the coordinates.
         Returns:
             padded_targets: ``(batch_size, N_max, 3)`` — regression targets
-                from ``g.ndata[target_key]``.
+                from ``g.ndata[target_key]`` (omitted when
+                ``target_key is None``).
             padded_times: ``(batch_size, N_max, 1)`` — diffusion times from
                 ``g.ndata['t']``.
             padded_atom_index: ``(batch_size, N_max, 1)`` — per-atom type
                 indices from ``g.ndata['atom_index']``.
             padded_nodes: ``(batch_size, N_max, node_feat_dim)``.
-            padded_edges: ``(batch_size, N_max, N_max, edge_feat_dim + D_count)``
-                with RBF distance features concatenated along the last axis.
+            padded_edges: ``(batch_size, N_max, N_max, edge_feat_dim + D_count + 3)``
+                with RBF distance features and displacement vectors
+                concatenated along the last axis.
             node_mask: ``(batch_size, N_max)`` — ``True`` at padding positions.
             pair_mask: ``(batch_size, N_max, N_max)`` — ``True`` at padding
                 positions.
@@ -426,18 +440,20 @@ class GraphAdapter:
         # (batch_size, N_max, N_max, edge_feat_dim).
         padded_edges, pair_mask = edges_to_pair_tensor(g.edata[feat_key_edges], g)
 
-        # Compute RBF-encoded pairwise distances from padded 3-D coordinates
-        # and concatenate them to the edge features along the last axis.
+        # Compute RBF-encoded pairwise distances and displacement vectors from
+        # padded 3-D coordinates, then concatenate both to the edge features.
         padded_coords = nodes_to_padded_tensor(g.ndata[coord_key], g)
-        rbf_feats, rbf_mask = self.compute_rbf_edge_features(
+        if apply_random_rotations:
+            padded_coords = randomly_rotate(padded_coords)
+        rbf_feats, displacements, rbf_mask = self.compute_rbf_edge_features(
             padded_coords, D_min=D_min, D_max=D_max, D_count=D_count,
         )
         pair_mask = rbf_mask  # includes both padding and diagonal
-        padded_edges = torch.cat([padded_edges, rbf_feats], dim=-1)
+        padded_edges = torch.cat([padded_edges, rbf_feats, displacements], dim=-1)
         # padded_edges = padded_edges.masked_fill(pair_mask.unsqueeze(-1), 0.0)
 
-        # Pad regression targets (x1 coordinates) into (batch_size, N_max, 3).
-        padded_targets = nodes_to_padded_tensor(g.ndata[target_key], g)
+        if target_key is not None:
+            padded_targets = nodes_to_padded_tensor(g.ndata[target_key], g)
 
         # Pad per-node flow / diffusion times into (batch_size, N_max, 1), reusing the
         # same local_idx mapping computed above for the node features.
@@ -445,10 +461,11 @@ class GraphAdapter:
         padded_times = times.new_zeros(self.batch_size, max_n, 1)
         padded_times[self.batch_ids_nodes, local_idx] = times
 
-        # Return the padded tensors
-        result = (padded_targets, padded_times, padded_coords, padded_nodes, padded_atom_index, padded_edges, ~node_mask, ~pair_mask)
-        # NOTE: the MASK TENSORS for both nodes and edges indicate 
+        # NOTE: the MASK TENSORS for both nodes and edges indicate
         #       padding positions as FALSE and non-padding positions as TRUE
+        result = (padded_times, padded_coords, padded_nodes, padded_atom_index, padded_edges, ~node_mask, ~pair_mask)
+        if target_key is not None:
+            result = (padded_targets,) + result
 
         if return_sigma_t:
             # Pad per-node noise scale into (batch_size, N_max, 1).

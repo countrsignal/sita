@@ -70,9 +70,9 @@ class PairEmbedding(nn.Module):
 
         self.dropout_prob = dropout_prob
         self.mlp = nn.Sequential(
-            nn.Linear(edge_feats_in, edge_feats_out, bias=True),
+            nn.Linear(edge_feats_in, edge_feats_out, bias=False),
             nn.SiLU(),
-            nn.Linear(edge_feats_out, edge_feats_out, bias=True)
+            nn.Linear(edge_feats_out, edge_feats_out, bias=False)
         )
         self.tri_mul_in = TriangleMultiplicationIncoming(
             c_pairs=edge_feats_out,
