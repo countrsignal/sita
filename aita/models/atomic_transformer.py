@@ -32,6 +32,7 @@ class AtomicTransformer(nn.Module):
         self.decoder = AtomicDecoder(
             n_vecs=n_vecs,
             c_atoms=c_atoms,
+            c_pairs=c_pairs,
             n_heads=n_heads,
             n_layers=n_layers,
             dropout_prob=dropout_prob,
@@ -45,21 +46,22 @@ class AtomicTransformer(nn.Module):
         time: Tensor,
         attr: Tensor,
         atom_index: Tensor,
-        edge_feats: Tensor,
+        pair_feats: Tensor,
         atom_mask: Tensor,
-        edge_mask: Tensor,
+        pair_mask: Tensor,
     ) -> Tuple[Tensor, Tensor, Tensor]:
-        x_h, edge_repr = self.encoder(
+        x_h, pair_repr = self.encoder(
             x_t=x_t,
             time=time,
             attr=attr,
             atom_index=atom_index,
-            edge_feats=edge_feats,
+            pair_feats=pair_feats,
             atom_mask=atom_mask,
-            edge_mask=edge_mask,
+            pair_mask=pair_mask,
         )
         velocity, x_h = self.decoder(
             x_h=x_h,
+            pair_repr=pair_repr,
             atom_mask=atom_mask,
         )
-        return velocity, x_h, edge_repr
+        return velocity, x_h, pair_repr

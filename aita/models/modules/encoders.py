@@ -156,9 +156,9 @@ class AtomicEncoder(nn.Module):
         time: Tensor,
         attr: Tensor,
         atom_index: Tensor,
-        edge_feats: Tensor,
+        pair_feats: Tensor,
         atom_mask: Tensor,
-        edge_mask: Tensor,
+        pair_mask: Tensor,
     ) -> Tuple[Tensor, Tensor]:
 
         # Latent vectors based on initial coordinates
@@ -181,7 +181,7 @@ class AtomicEncoder(nn.Module):
         x_h = x_h * atom_mask.unsqueeze(-1)
 
         # Embed the edge features
-        edge_repr = self.pair_embedder(pair_features=edge_feats, pair_mask=edge_mask)
+        edge_repr = self.pair_embedder(pair_features=pair_feats, pair_mask=pair_mask)
         # edge_repr: (batch_size, n_atoms, n_atoms, c_pairs)
 
         # Project the edge features to the atom features
