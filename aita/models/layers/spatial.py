@@ -154,7 +154,7 @@ class SpatialMLP(nn.Module):
         n_feats_in: int,
         n_feats_out: int,
         n_vecs_in: int,
-        n_vecs_out: Optional[int] = None,
+        n_vecs_out: int,
         vectors_activation: nn.Module = nn.Sigmoid(),
         vector_gating: bool = True,
     ):
