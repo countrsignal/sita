@@ -367,6 +367,7 @@ class GraphAdapter:
         D_min: float = 0.,
         D_max: float = 20.,
         D_count: int = 16,
+        use_rbf: bool = False,
         return_sigma_t: bool = False,
         apply_random_rotations: bool = False,
     ) -> Tuple[torch.Tensor, ...]:
@@ -386,6 +387,9 @@ class GraphAdapter:
             D_min: Minimum distance for RBF centres.
             D_max: Maximum distance for RBF centres.
             D_count: Number of RBF basis functions.
+            use_rbf: If ``True`` (default), append RBF distance features and
+                displacement vectors to the edge features.  When ``False``,
+                the edge tensor keeps its original feature dimension.
             return_sigma_t: If ``True``, also return the padded noise scale
                 ``sigma_t`` from ``g.ndata['sigma_t']``.
             apply_random_rotations: If ``True``, apply random rotations to the coordinates.
@@ -398,9 +402,9 @@ class GraphAdapter:
             padded_atom_index: ``(batch_size, N_max, 1)`` — per-atom type
                 indices from ``g.ndata['atom_index']``.
             padded_nodes: ``(batch_size, N_max, node_feat_dim)``.
-            padded_edges: ``(batch_size, N_max, N_max, edge_feat_dim + D_count + 3)``
-                with RBF distance features and displacement vectors
-                concatenated along the last axis.
+            padded_edges: ``(batch_size, N_max, N_max, edge_feat_dim [+ D_count + 3])``
+                — when ``use_rbf=True`` the RBF distance features and
+                displacement vectors are concatenated along the last axis.
             node_mask: ``(batch_size, N_max)`` — ``True`` at padding positions.
             pair_mask: ``(batch_size, N_max, N_max)`` — ``True`` at padding
                 positions.
@@ -440,17 +444,20 @@ class GraphAdapter:
         # (batch_size, N_max, N_max, edge_feat_dim).
         padded_edges, pair_mask = edges_to_pair_tensor(g.edata[feat_key_edges], g)
 
-        # Compute RBF-encoded pairwise distances and displacement vectors from
-        # padded 3-D coordinates, then concatenate both to the edge features.
         padded_coords = nodes_to_padded_tensor(g.ndata[coord_key], g)
         if apply_random_rotations:
             padded_coords = randomly_rotate(padded_coords)
-        rbf_feats, displacements, rbf_mask = self.compute_rbf_edge_features(
-            padded_coords, D_min=D_min, D_max=D_max, D_count=D_count,
-        )
-        pair_mask = rbf_mask  # includes both padding and diagonal
-        padded_edges = torch.cat([padded_edges, rbf_feats, displacements], dim=-1)
-        # padded_edges = padded_edges.masked_fill(pair_mask.unsqueeze(-1), 0.0)
+
+        if use_rbf:
+            rbf_feats, displacements, rbf_mask = self.compute_rbf_edge_features(
+                padded_coords, D_min=D_min, D_max=D_max, D_count=D_count,
+            )
+            pair_mask = rbf_mask
+            padded_edges = torch.cat([padded_edges, rbf_feats, displacements], dim=-1)
+
+        # pair_mask from edges_to_pair_tensor only covers padding; add diagonal
+        diag = torch.eye(max_n, device=self.device, dtype=torch.bool).unsqueeze(0)
+        pair_mask = pair_mask | diag
 
         if target_key is not None:
             padded_targets = nodes_to_padded_tensor(g.ndata[target_key], g)
