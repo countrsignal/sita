@@ -89,7 +89,7 @@ def main():
         c_atoms=128,
         c_pairs=128,
         n_heads = 16,
-        n_layers = 7,
+        n_layers = 8,
         dropout_prob = 0.1,
         bias = False,
         initial_norm = True,
