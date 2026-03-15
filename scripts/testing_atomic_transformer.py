@@ -19,6 +19,7 @@ from aita.utils.graph_utils import GraphAdapter
 from aita.data.datasets import SimulationDataset
 from aita.utils.rigid_align_loss import compute_mse_loss
 from aita.models.atomic_transformer import AtomicTransformer
+from aita.models.components.ema import EMA
 
 from aita.utils.interactive import (
     initialize_config,
@@ -95,12 +96,13 @@ def main():
         initial_norm = True,
     )
     model = model.to("cuda:0")
+    ema = EMA(model, beta=0.999, update_every=10, allow_different_devices=True)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Number of trainable parameters: {trainable_params}")
 
-    n_epochs = 30
+    n_epochs = 20
     device = "cuda:0"
     plot_interval = 5  # Plot loss every K epochs
     monitor = {"loss":  [], "lr": []}
@@ -143,7 +145,7 @@ def main():
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            # scheduler.step(loss.item())
+            ema.update()
             
             running_losses["loss"] += loss.item()
             num_batches += 1

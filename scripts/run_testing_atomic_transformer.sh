@@ -3,7 +3,6 @@
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:1
 #SBATCH --ntasks-per-node=2
-#SBATCH --exclude=g016,g017,g018
 #SBATCH --time=0-8:00:00
 #SBATCH --partition=koes_gpu
 #SBATCH --mem=100G
