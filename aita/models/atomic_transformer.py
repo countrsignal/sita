@@ -65,3 +65,20 @@ class AtomicTransformer(nn.Module):
             atom_mask=atom_mask,
         )
         return velocity, x_h, pair_repr
+
+    def compute_loss(
+        self,
+        preds: Tensor,
+        target: Tensor,
+        atom_mask: Tensor,
+    ) -> Tensor:
+        # check that node mask at least contains 1 atom per molecule
+        assert torch.all(atom_mask.sum(dim=-1) > 0), "Node mask must contain at least 1 atom per molecule"
+
+        per_atom_mse = (preds - target).square().mean(dim=-1)  # (B, N)
+        per_atom_mse = per_atom_mse * atom_mask                  # zero out padding
+
+        atoms_per_mol = atom_mask.sum(dim=-1)                    # (B,)
+        per_mol_loss = per_atom_mse.sum(dim=-1) / atoms_per_mol  # (B,)
+
+        return per_mol_loss.mean()

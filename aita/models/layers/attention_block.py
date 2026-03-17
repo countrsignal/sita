@@ -33,7 +33,10 @@ class AttentionBlock(nn.Module):
         self.v_proj = nn.Linear(c_atoms, c_atoms, bias=bias)
         self.out_proj = nn.Linear(c_atoms, c_atoms, bias=bias)
 
-        self.bias_proj = LinearNoBias(c_pairs, n_heads)
+        self.bias_proj = nn.Sequential(
+            nn.LayerNorm(c_pairs),
+            LinearNoBias(c_pairs, n_heads),
+        )
 
         self.residual = ResidualTransition(dim=c_atoms, hidden=c_atoms, dropout_prob=dropout_prob)
 
@@ -43,7 +46,6 @@ class AttentionBlock(nn.Module):
         for proj in (self.q_proj, self.k_proj, self.v_proj):
             lecun_normal_init_(proj.weight)
         final_init_(self.out_proj.weight)
-        final_init_(self.bias_proj.weight)
 
     def forward(self, x: Tensor, mask: Tensor, edge_repr: Tensor) -> Tensor:
         # x:         (B, N, c_atoms)
