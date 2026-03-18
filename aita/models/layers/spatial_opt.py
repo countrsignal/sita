@@ -51,7 +51,7 @@ _compile = getattr(torch, "compile", _no_compile)
 # Fused standalone helpers
 # ---------------------------------------------------------------------------
 
-@_compile(dynamic=True)
+@_compile()
 def _fused_vec_norm(
     vectors: Tensor, mask: Tensor, eps: float = 1e-5,
 ) -> Tensor:
@@ -62,7 +62,7 @@ def _fused_vec_norm(
     return (vectors / vn) * mask[..., None, None]
 
 
-@_compile(dynamic=True)
+@_compile()
 def _fused_norm(
     x: Tensor, dim: int = -1, keepdim: bool = False, eps: float = 1e-8,
 ) -> Tensor:

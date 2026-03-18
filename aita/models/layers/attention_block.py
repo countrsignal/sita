@@ -1,3 +1,5 @@
+import math
+
 import torch
 import torch.nn.functional as F
 from torch import nn, Tensor
@@ -26,6 +28,7 @@ class AttentionBlock(nn.Module):
         self.c_pairs = c_pairs
         self.n_heads = n_heads
         self.head_dim = c_atoms // n_heads
+        self.scale = 1.0 / math.sqrt(self.head_dim)
         self.dropout_prob = dropout_prob
 
         self.norm = LayerNormEps(c_atoms) if initial_norm else nn.Identity()
@@ -67,6 +70,7 @@ class AttentionBlock(nn.Module):
             q, k, v,
             attn_mask=attn_bias,
             dropout_p=self.dropout_prob if self.training else 0.0,
+            scale=self.scale,
         )
         # (B, n_heads, N, head_dim)
 

@@ -14,7 +14,7 @@ from ..layers.spatial_opt import (
     VelocityProjection,
     VelocityUpdate,
 )
-from ..layers.attention_block import AttentionBlock
+from ..layers.attention_block_opt import CompiledAttentionBlock
 from ..layers.primitives import LinearNoBias
 
 
@@ -175,7 +175,7 @@ class OptimizedAtomicDecoder(nn.Module):
         self.velocity_updates = nn.ModuleList([])
         for idx in range(n_layers):
             self.attention_blocks.append(
-                AttentionBlock(
+                CompiledAttentionBlock(
                     c_atoms=c_atoms,
                     c_pairs=c_pairs,
                     n_heads=n_heads,
