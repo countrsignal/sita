@@ -12,8 +12,8 @@ from ..layers.swish import SwishBeta
 from ..layers.gvp import _norm_no_nan
 from ..layers.primitives import LinearNoBias
 from ..layers.attention_block import AttentionBlock
-from ..layers.spatial import VelocityProjection, VelocityUpdate, VelocityLayerNorm
 from ..layers.gvp import GVPConv, NodePositionUpdate, EdgeUpdate, _rbf
+from ..layers.spatial import VelocityProjection, VelocityUpdate, VelocityLayerNorm, PairTransition
 
 class GVP_Decoder(nn.Module):
 
@@ -175,25 +175,28 @@ class AtomicDecoder(nn.Module):
         x_h: Tensor,
         pair_repr: Tensor,
         atom_mask: Tensor,
+        pair_mask: Tensor,
     ) -> Tuple[Tensor, Tensor]:
     
         # NOTE: 'vfs' stands for velocity field superpositions.
-        vfs = self.velocity_projection(x_h, atom_mask)
+        vfs = self.velocity_projection(x_h=x_h, atom_mask=atom_mask)
         # vfs: (..., n_vecs, 3)
         # x_h: (..., c_atoms)
         # atom_mask: (...)
 
 
         for idx in range(self.n_layers - 1):
-            x_h = self.attention_blocks[idx](x_h, atom_mask, pair_repr)
-            vfs_update, x_h = self.velocity_updates[idx](vfs, x_h, atom_mask)
+            x_h = self.attention_blocks[idx](x=x_h, mask=atom_mask, edge_repr=pair_repr)
+            # x_h: (..., c_atoms)
+
+            vfs_update, x_h = self.velocity_updates[idx](vfs=vfs, x_h=x_h, atom_mask=atom_mask)
             # vfs_update: (..., n_vecs, 3)
             
             vfs = vfs + vfs_update
-            vfs = self.velocity_layernorms[idx](vfs, atom_mask)
+            vfs = self.velocity_layernorms[idx](vectors=vfs, atom_mask=atom_mask)
 
-        x_h = self.attention_blocks[-1](x_h, atom_mask, pair_repr)
-        velocity, x_h = self.velocity_updates[-1](vfs, x_h, atom_mask)
+        x_h = self.attention_blocks[-1](x=x_h, mask=atom_mask, edge_repr=pair_repr)
+        velocity, x_h  = self.velocity_updates[-1](vfs=vfs, x_h=x_h, atom_mask=atom_mask)
         # velocity: (..., 3)
 
         return velocity.squeeze(-2), x_h

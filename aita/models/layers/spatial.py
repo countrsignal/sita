@@ -5,8 +5,11 @@ import torch
 from torch import nn, Tensor
 import torch.nn.functional as F
 
-from .gvp import _norm_no_nan
-from .primitives import LinearNoBias
+from .gvp import _norm_no_nan, _rbf
+from .pair_dropout import get_dropout_mask
+from .transition import ResidualTransition
+from .primitives import LinearNoBias, LayerNormEps
+from .triangular_mult import TriangleMultiplicationIncoming, TriangleMultiplicationOutgoing
 
 
 class VelocityLayerNorm(nn.Module):
@@ -145,3 +148,139 @@ class VelocityUpdate(nn.Module):
         feats_out = feats_out * atom_mask.unsqueeze(-1)
 
         return vectors_out, feats_out
+
+
+class VirtualPositionUpdate(nn.Module):
+    """
+    Update the virtual positions of the atoms.
+
+    Args:
+        n_vecs: Number of velocity vectors per atom.
+        c_atoms: Dimensionality of the atom features (node embeddings).
+        c_pairs: Dimensionality of the pair features (edge embeddings).
+        dropout_prob: Dropout probability.
+        coords_range: Range of the coordinates.
+    """
+
+    def __init__(
+        self,
+        n_vecs: int,
+        c_atoms: int,
+        coords_range: float = 10.0,
+    ) -> None:
+        super().__init__()
+
+        self.n_vecs = n_vecs
+        self.n_vecs_out = 1
+        self.c_atoms = c_atoms
+        self.coords_range = coords_range
+
+        dim_h = max(n_vecs, self.n_vecs_out)
+        self.dim_h = dim_h
+
+        wh_k = 1 / math.sqrt(n_vecs)
+        self.Wh = nn.Parameter(
+            torch.zeros(n_vecs, dim_h).uniform_(-wh_k, wh_k)
+        )
+
+        wu_k = 1 / math.sqrt(dim_h)
+        self.Wu = nn.Parameter(
+            torch.zeros(dim_h, self.n_vecs_out).uniform_(-wu_k, wu_k)
+        )
+
+        self.vectors_activation = nn.Tanh()
+
+        self.to_feats_out = nn.Sequential(
+            nn.Linear(c_atoms + dim_h, c_atoms),
+            nn.SiLU(),
+        )
+        self.scalar_to_vector_gates = nn.Linear(c_atoms, 1)
+
+
+    def forward(
+        self,
+        xs: Tensor,
+        vfs: Tensor,
+        x_h: Tensor,
+        atom_mask: Tensor,
+    ) -> Tuple[Tensor, Tensor]:
+        # vfs: (..., n_vecs, 3)
+        # x_h: (..., c_atoms)
+        # atom_mask: (...)
+
+        Vh = torch.einsum('... v c, v h -> ... h c', vfs, self.Wh)
+        Vu = torch.einsum('... h c, h u -> ... u c', Vh, self.Wu)
+
+        sh = _norm_no_nan(Vh, axis=-1)
+        s = torch.cat((x_h, sh), dim=-1)
+        feats_out = self.to_feats_out(s)
+
+        gating = self.scalar_to_vector_gates(feats_out).unsqueeze(-1)
+
+        vectors_out = self.vectors_activation(gating) * Vu
+        vectors_out = self.coords_range * vectors_out * atom_mask[..., None, None]
+
+        return xs + vectors_out.squeeze(-2)
+
+
+
+class PairTransition(nn.Module):
+
+    def __init__(
+        self,
+        n_vecs: int,
+        c_atoms: int,
+        c_pairs: int,
+        rbf_dim: int = 16,
+        rbf_dmax: float = 20,
+        dropout_prob: float = 0.0,
+        coords_range: float = 10.0,
+    ) -> None:
+        super().__init__()
+
+        self.rbf_dim = rbf_dim
+        self.rbf_dmax = rbf_dmax
+        self.dropout_prob = dropout_prob
+
+        self.vpu = VirtualPositionUpdate(
+            n_vecs=n_vecs,
+            c_atoms=c_atoms,
+            coords_range=coords_range,
+        )
+
+        self.pair_update = nn.Sequential(
+            LinearNoBias(c_pairs + rbf_dim, c_pairs),
+            nn.SiLU(),
+            LinearNoBias(c_pairs, c_pairs),
+        )
+
+        self.residual_update = ResidualTransition(c_pairs, hidden=c_pairs, dropout_prob=0.0)
+    
+    def forward(
+        self,
+        xs: Tensor,
+        vfs: Tensor,
+        x_h: Tensor,
+        atom_mask: Tensor,
+        pair_repr: Tensor,
+        pair_mask: Tensor,
+    ) -> Tensor:
+        # xs: (..., n_atoms, 3)
+        # vfs: (..., n_atoms, n_vecs, 3)
+        # x_h: (..., c_atoms)
+        # atom_mask: (...)
+        # pair_repr: (..., n_atoms, n_atoms, c_pairs)
+        # pair_mask: (..., n_atoms, n_atoms)
+
+        xs = self.vpu(xs=xs, vfs=vfs, x_h=x_h, atom_mask=atom_mask)
+
+        # compute the pairwise distances
+        d = _rbf(
+            torch.cdist(xs, xs, p=2.0),
+            D_max=self.rbf_dmax,
+            D_count=self.rbf_dim,
+        )
+        pair_repr = self.pair_update(torch.cat([pair_repr, d], dim=-1))
+        pair_repr = self.residual_update(x=pair_repr, attn_out=pair_repr)
+        pair_repr = pair_repr * pair_mask.unsqueeze(-1)
+        return xs, pair_repr

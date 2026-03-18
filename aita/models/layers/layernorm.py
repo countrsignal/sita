@@ -18,7 +18,9 @@ class SafeLayerNorm(nn.Module):
     """
     def __init__(self, normalized_shape, eps=1e-5, elementwise_affine=True, bias=True):
         super(SafeLayerNorm, self).__init__()
-        self.normalized_shape = normalized_shape
+        if isinstance(normalized_shape, int):
+            normalized_shape = (normalized_shape,)
+        self.normalized_shape = tuple(normalized_shape)
         self.eps = eps
         self.elementwise_affine = elementwise_affine
         
@@ -36,28 +38,9 @@ class SafeLayerNorm(nn.Module):
             self.register_parameter('beta', None)
 
     def forward(self, x):
-        """
-        Apply layer normalization with the reparameterized scale.
-        
-        Args:
-            x: Input tensor
-            
-        Returns:
-            Normalized tensor
-        """
-        # Compute mean and variance for normalization
-        mean = x.mean(dim=-1, keepdim=True)
-        var = x.var(dim=-1, unbiased=False, keepdim=True)
-        
-        # Normalize the input
-        x_normalized = (x - mean) / torch.sqrt(var + self.eps)
-        
-        if self.elementwise_affine:
-            # Apply the reparameterized scale (1 + gamma) and shift (beta)
-            scale = 1.0 + self.gamma
-            x_normalized = x_normalized * scale + self.beta
-            
-        return x_normalized
+        weight = (1.0 + self.gamma) if self.elementwise_affine else None
+        bias = self.beta if self.elementwise_affine else None
+        return F.layer_norm(x, self.normalized_shape, weight, bias, self.eps)
 
 
 class AdaLN(nn.Module):

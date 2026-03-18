@@ -86,13 +86,12 @@ class ResidualTransition(nn.Module):
         self.drop1 = nn.Dropout(dropout_prob)
         self.drop2 = nn.Dropout(dropout_prob)
         
-        self.fc1 = LinearNoBias(dim, hidden)
-        self.fc2 = LinearNoBias(dim, hidden)
+        self.fc12 = LinearNoBias(dim, 2 * hidden)
         self.fc3 = LinearNoBias(hidden, out_dim)
         self.silu = nn.SiLU()
 
-        lecun_normal_init_(self.fc1.weight)
-        lecun_normal_init_(self.fc2.weight)
+        for w in self.fc12.weight.chunk(2, dim=0):
+            lecun_normal_init_(w)
         final_init_(self.fc3.weight)
 
     def forward(self, x: Tensor, attn_out: Tensor) -> Tensor:
@@ -110,6 +109,7 @@ class ResidualTransition(nn.Module):
 
         """
         h = self.norm(x + self.drop1(attn_out))
-        h = self.silu(self.fc1(h)) * self.fc2(h)
+        h1, h2 = self.fc12(h).chunk(2, dim=-1)
+        h = self.silu(h1) * h2
         x = x + self.fc3(self.drop2(h))
         return x

@@ -141,6 +141,7 @@ class AtomicEncoder(nn.Module):
         self.atom_embedder = nn.Sequential(
             LinearNoBias(2 * c_atoms, c_atoms),
             nn.SiLU(),
+            LinearNoBias(c_atoms, c_atoms),
         )
         self.pair_embedder = PairEmbedding(
             edge_feats_in=edge_feats_in,

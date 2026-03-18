@@ -4,6 +4,7 @@ from typing import Tuple
 
 from .modules.encoders import AtomicEncoder
 from .modules.decoders import AtomicDecoder
+from .modules.decoder_opt import OptimizedAtomicDecoder
 
 
 class AtomicTransformer(nn.Module):
@@ -29,7 +30,7 @@ class AtomicTransformer(nn.Module):
             c_pairs=c_pairs,
             dropout_prob=dropout_prob,
         )
-        self.decoder = AtomicDecoder(
+        self.decoder = OptimizedAtomicDecoder(
             n_vecs=n_vecs,
             c_atoms=c_atoms,
             c_pairs=c_pairs,
@@ -63,6 +64,7 @@ class AtomicTransformer(nn.Module):
             x_h=x_h,
             pair_repr=pair_repr,
             atom_mask=atom_mask,
+            pair_mask=pair_mask,
         )
         return velocity, x_h, pair_repr
 
