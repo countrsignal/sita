@@ -5,6 +5,7 @@ from typing import Tuple
 from .modules.encoders import AtomicEncoder
 from .modules.decoders import AtomicDecoder
 from .modules.decoder_opt import OptimizedAtomicDecoder
+from .modules.atomic_encoder_opt import OptimizedAtomicEncoder
 
 
 class AtomicTransformer(nn.Module):
@@ -23,7 +24,7 @@ class AtomicTransformer(nn.Module):
     ) -> None:
         super().__init__()
 
-        self.encoder = AtomicEncoder(
+        self.encoder = OptimizedAtomicEncoder(
             node_feats_in=node_feats_in,
             edge_feats_in=edge_feats_in,
             c_atoms=c_atoms,
