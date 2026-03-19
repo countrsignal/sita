@@ -18,7 +18,6 @@ from ..models.ebms import EBM
 from ..pipeline.pipeline import Pipeline
 from ..utils.logging import RankedLogger
 from ..models.vector_field_v2 import VFV2
-from ..models.vector_field_tempered import VFT
 from ..utils.data_utils import angstrom_to_nm
 from ..data.datasets import GenerativeDatasetSingleMolecule, NCMCSingleMoleculeDataset
 from ..ncmc import NonequilibriumCandidateMonteCarlo
@@ -39,16 +38,8 @@ BATCH_EBM = Dict[str, Tensor]
 BATCH = Union[BATCH_FLOW, BATCH_EBM]
 
 EBM_MODEL = EBM
-FLOW_MODEL = Union[VFV2, VFT]
+FLOW_MODEL = Union[VFV2]
 
-###################################
-# functions
-###################################
-
-def add_temperature_to_batch(batch: BATCH_FLOW, temperature: float) -> BATCH_FLOW:
-    """Add temperature to the batch."""
-    batch.ndata["temperature"] = torch.full((batch.num_nodes(),), temperature, dtype=torch.float32)
-    return batch
 
 ###################################
 # Classes
@@ -237,7 +228,6 @@ class AnnealerADP(LightningModule):
 
             # Check if we anneal the prior
             if jumping:
-                assert isinstance(self.flow, VFT) is False, "Prior annealing is only supported for non-tempered flow models"
                 prev_temp = self._temperature_ladder[self._temperature_index - 1] if self._temperature_index > 0 else 1200.00
                 prior_beta = (temp / prev_temp) ** 0.5
                 log.log(20, f"<<!>> Scaling prior st. dev. to {prior_beta} for annealing...")
@@ -255,8 +245,6 @@ class AnnealerADP(LightningModule):
                 interpolant=self.flow_interpolant,
                 method=self.hparams.generate_ebm_dataset.method,
                 prior_beta=prior_beta,
-                temperature=temp if isinstance(self.flow, VFT) else None,
-                tsr_params=self.hparams.generate_ebm_dataset.get("tsr_params", None),
             )
             log.log(20, "Data generation completed.")
 
@@ -417,10 +405,6 @@ class AnnealerADP(LightningModule):
             if self.pipeline is not None:
                 batch = self.pipeline.run_flow(batch, is_training=True)
 
-            # NOTE: Explicit temperature dependency for VFT models
-            if isinstance(self.flow, VFT):
-                batch = add_temperature_to_batch(batch, self._temperature_ladder[self._temperature_index])
-
         return batch
 
     def training_step(self, batch: BATCH, batch_idx: int) -> Tensor:
@@ -522,8 +506,6 @@ class AnnealerADP(LightningModule):
                         interpolant=self.flow_interpolant,
                         method=self.hparams.generate_flow_samples.method,
                         prior_beta=1.0, # NOTE: we always use the prior beta of 1.0 during inspection
-                        temperature=current_temp if isinstance(self.flow, VFT) else None,
-                        tsr_params=self.hparams.generate_flow_samples.get("tsr_params", None),
                     )
 
                     # evaluate forcefield on generated samples

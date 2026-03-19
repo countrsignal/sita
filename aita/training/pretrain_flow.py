@@ -107,10 +107,6 @@ class PreTrainerFlow(LightningModule):
         if self.pipeline is not None:
             batch = self.pipeline.run_flow(batch, is_training=True)
 
-        # NOTE: Explicit temperature dependency for VFT models
-        if self.hparams.get("explicit_temperature", None) is not None:
-            batch.ndata["temperature"] = torch.full((batch.num_nodes(),), self.hparams.explicit_temperature, dtype=torch.float32)
-
         return batch
 
     def training_step(self, batch: dgl.DGLGraph, batch_idx: int) -> Tensor:

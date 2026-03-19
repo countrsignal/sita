@@ -50,29 +50,6 @@ class Interpolant:
 
         return velocity
 
-    def ode_tsr_forward(
-        self,
-        t: Union[float, torch.Tensor],
-        x: torch.Tensor,
-        g: dgl.DGLGraph,
-        model: torch.nn.Module,
-        tsr_params: Dict[str, float],
-    ) -> torch.Tensor:
-        # NOTE: this function is intended to called inside the torchdiffeq.odeint function
-        # NOTE: instide the torchdiffeq.odeint function, x is a 2D tensor with shape (batch_size, num_nodes * 3)
-        # NOTE: we assume the provided dgl graph already contains the categorical features
-        g.ndata["xt"] = x.view(g.num_nodes(), 3) # [batch_size * num_nodes, 3]
-        g.ndata["t"] = t * torch.ones((g.num_nodes(), 1), device=g.device) # [batch_size * num_nodes, 1]
-        velocity = model.inference_fwd(g)
-
-        # reshape velocity to (batch_size, n_particles * 3)
-        n_particles = g.num_nodes() // g.batch_size # it is expected that we only generate conformers for one molecular species at a time
-        velocity = velocity.view(g.batch_size, n_particles * 3)
-
-        # Tenperal Score Rescaling (TSR)
-        velocity = self.plan.temporal_score_rescale(**tsr_params, t=t, x=x, velocity=velocity)
-        return velocity
-
     @torch.no_grad()
     def ode_integrate(
         self,
@@ -82,8 +59,6 @@ class Interpolant:
         model: torch.nn.Module,
         method: str = "dopri5",
         prior_beta: float = 1.0,
-        temperature: Optional[float] = None,
-        tsr_params: Optional[Dict[str, float]] = None,
     ) -> torch.Tensor:
         """
         Integrate the ODE to generate conformers for a given molecule defined by the categorical features.
@@ -110,22 +85,13 @@ class Interpolant:
         x_init = x_init.view(batch_size, mol.n_atoms * 3)
         time_span = torch.linspace(0.0, 1.0, n_timesteps + 1)
 
-        # add temperature to the graph
-        if temperature is not None:
-            # NOTE: This should only be used for the tempered-flow models
-            g.ndata["temperature"] = torch.full((g.num_nodes(),), temperature, dtype=torch.float32)
-
         # move data to device
         g = g.to(device)
         x_init = x_init.to(device)
         time_span = time_span.to(device)
 
         # create the forward function
-        if tsr_params is None or len(tsr_params) == 0:
-            forward_fn = partial(self.ode_forward, g=g, model=model)
-        else:
-            time_span = time_span[:-1] # NOTE: we exclude the final time step to avoid numerical instability
-            forward_fn = partial(self.ode_tsr_forward, g=g, model=model, tsr_params=tsr_params)
+        forward_fn = partial(self.ode_forward, g=g, model=model)
 
         # integrate the ODE
         xs = odeint_adjoint(forward_fn, x_init, time_span, method=method, rtol=self.rtol, atol=self.atol, adjoint_params=())
