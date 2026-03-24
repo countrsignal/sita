@@ -37,6 +37,7 @@ def fully_connected_edges(num_nodes: int) -> Tuple[torch.Tensor, torch.Tensor]:
 @dataclass
 class Molecule:
     name: str
+    pdb_path: str
     n_atoms: int = field(init=False, default_factory=lambda: 0)
     atom_dict: Dict[str, Any] = field(default_factory=dict)
     bond_dict: Dict[int, Dict[str, List[int]]] = field(default_factory=dict)
@@ -97,6 +98,7 @@ class Molecule:
         residue_type_one_hot, atom_one_hot = categorical_featurizer(atom_dict, ATOM_TYPES_ENCODING, return_concat=False)
         return Molecule(
             name=Path(pdb_path).stem,
+            pdb_path=Path(pdb_path).absolute(),
             atom_dict=atom_dict,
             bond_dict=bond_dict,
             res_types=residue_type_one_hot,
@@ -145,6 +147,7 @@ class ADP(Molecule):
         residue_type_one_hot, atom_one_hot = DEBUG_FEATURIZERS["alanine_dipeptide"](return_concat=False)
         return ADP(
             name=Path(pdb_path).stem,
+            pdb_path=Path(pdb_path).absolute(),
             atom_dict=atom_dict,
             bond_dict=bond_dict,
             res_types=residue_type_one_hot,
@@ -164,6 +167,7 @@ class ATP(Molecule):
         residue_type_one_hot, atom_one_hot = DEBUG_FEATURIZERS["alanine_tripeptide"](return_concat=False)
         return ATP(
             name=Path(pdb_path).stem,
+            pdb_path=Path(pdb_path).absolute(),
             atom_dict=atom_dict,
             bond_dict=bond_dict,
             res_types=residue_type_one_hot,

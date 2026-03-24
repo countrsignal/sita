@@ -580,3 +580,99 @@ class NCMCSingleMoleculeDataset(Dataset):
         del(traj, samples_th, energies)
         gc.collect()
         return dataset
+
+
+class BootstrapSingleMoleculeDataset(Dataset):
+
+    def __init__(self, data_path: str, pdb_id: str):
+        super(BootstrapSingleMoleculeDataset, self).__init__()
+
+        self.data_path = Path(data_path)
+        self.pdb_id = pdb_id
+
+        # NOTE: for single molecule datasets, we do not use splits and we load the molecule from the pdb file
+        if pdb_id in DEBUG_MOLECULES:
+            self.pdb_path = self.data_path / "debug" / f"{pdb_id}.pdb"
+            self.molecules = {
+                pdb_id: DEBUG_MOLECULES[pdb_id].from_pdb(self.pdb_path)
+            }
+        else:
+            self.pdb_path = self.data_path / "pdbs" / f"{pdb_id}.pdb"
+            self.molecules = {
+                pdb_id: Molecule.from_pdb(self.pdb_path)
+            }
+
+        # NOTE: the rest of the machanics should be the same as the GenerativeDataset class
+        # dictionary for mapping from sample indices to molecule ids
+        self.backmap = {}
+        # samples cache
+        self._cache = []
+    
+    @staticmethod
+    def init_from_molecule(molecule: Molecule) -> "BootstrapSingleMoleculeDataset":
+        return BootstrapSingleMoleculeDataset(
+            data_path=[d for d in molecule.pdb_path.parents if str(d).endswith("/data")][0],
+            pdb_id=molecule.name,
+        )
+
+    @property
+    def cache(self):
+        return self._cache
+
+    @cache.setter
+    def cache(self, value: List[torch.Tensor]) -> None:
+        self._cache = value
+
+    def clear_cache(self) -> None:
+        self._cache = []
+        self.backmap = {}
+    
+    def _process_samples(self, samples: torch.Tensor) -> List[torch.Tensor]:
+        assert samples.dim() == 3, "Samples must be a 3D tensor"
+        assert samples.size(1) == self.molecules[self.pdb_id].n_atoms, "Number of atoms in samples must match number of atoms in molecule"
+        # remove center of mass
+        samples = samples - samples.mean(dim=1, keepdim=True)
+        return samples.chunk(samples.size(0), dim=0) # [(1, num_nodes, 3), ...]
+
+    def update_dataset(self, mol_id: str, samples: torch.Tensor) -> None:
+        prev_num_samples = len(self.cache)
+        # add samples to cache
+        self.cache.extend(self._process_samples(samples))
+        # update backmap
+        num_samples_enrolled = len(self.cache)
+        self.backmap.update({idx: mol_id for idx in list(range(prev_num_samples, num_samples_enrolled))})
+        # clear memory
+        del(samples, num_samples_enrolled, prev_num_samples)
+        gc.collect()
+
+    def __len__(self):
+        return len(self.cache)
+
+    def __getitem__(self, index):
+        # get the mol of interest
+        mol_id  = self.backmap[index]
+
+        # NOTE: we return the DGL graph for the molecule of interest for Flow AND EBM bootstraps
+        g = self.molecules[mol_id].to_dgl_graph()
+        g.ndata["x1"] = self.cache[index].squeeze(0) # (num_nodes, 3)
+        return g
+
+    def get_train_dataloader(self, batch_size: int, num_workers: int = 0, pin_memory: bool = False) -> GraphDataLoader:
+        return dgl.dataloading.GraphDataLoader(
+            self,
+            batch_size=batch_size,
+            shuffle=True,
+            drop_last=True,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+        )
+
+    def get_eval_dataloader(self, batch_size: int, num_workers: int = 0, pin_memory: bool = False) -> GraphDataLoader:
+        return dgl.dataloading.GraphDataLoader(
+            self,
+            batch_size=batch_size,
+            shuffle=False,
+            drop_last=False,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+        )

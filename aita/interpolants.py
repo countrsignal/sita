@@ -50,7 +50,7 @@ class Interpolant:
 
         return velocity
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def ode_integrate(
         self,
         mol: Molecule,
@@ -131,7 +131,7 @@ class Interpolant:
         mean_x = x + drift * dt
         return mean_x + torch.sqrt(xi) * dw
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def sde_integrate(
         self,
         mol: Molecule,

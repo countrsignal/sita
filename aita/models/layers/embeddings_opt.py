@@ -32,6 +32,7 @@ Optimizations
 """
 
 import math
+from typing import Callable
 
 import torch
 from torch import nn, Tensor
@@ -97,9 +98,10 @@ class AdaLNOpt(nn.Module):
     replicates the bias term of the original scale projection.
     """
 
-    def __init__(self, dim: int, dim_single_cond: int) -> None:
+    def __init__(self, dim: int, dim_single_cond: int, activation_fn: Callable = F.sigmoid) -> None:
         super().__init__()
         self.dim = dim
+        self.activation_fn = activation_fn
         self.a_norm = nn.LayerNorm(dim, elementwise_affine=False, bias=False)
         self.s_norm = nn.LayerNorm(dim_single_cond, bias=False)
         self.s_proj = nn.Linear(dim_single_cond, 2 * dim, bias=False)
@@ -107,12 +109,15 @@ class AdaLNOpt(nn.Module):
         # Match original nn.Linear bias initialization
         bound = 1.0 / math.sqrt(dim_single_cond)
         self.s_scale_bias = nn.Parameter(torch.empty(dim).uniform_(-bound, bound))
+        
+        # NOTE: this has a HUGE impact on sample quality
+        # self.s_scale_bias = nn.Parameter(torch.zeros(dim))
 
     def forward(self, a: Tensor, s: Tensor) -> Tensor:
         a = self.a_norm(a)
         s = self.s_norm(s)
         scale, bias = self.s_proj(s).chunk(2, dim=-1)
-        return torch.sigmoid(scale + self.s_scale_bias) * a + bias
+        return self.activation_fn(scale + self.s_scale_bias) * a + bias
 
 
 # ---------------------------------------------------------------------------
