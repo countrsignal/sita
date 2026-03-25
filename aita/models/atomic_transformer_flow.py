@@ -19,13 +19,6 @@ from .layers.embeddings_opt import FourierEmbeddingOpt, AdaLNOpt
 
 
 ################################################################################
-# constants: model types
-################################################################################
-
-MODEL_STATES = ["flow", "ebm", "inference"]
-
-
-################################################################################
 # functions: loss
 ################################################################################
 
@@ -340,7 +333,7 @@ class EnergyEstimator(nn.Module):
         }
 
 
-class AtomicTransformer(nn.Module):
+class AtomicTransformerFlow(nn.Module):
     def __init__(
         self,
         node_feats_in: int,
@@ -353,12 +346,8 @@ class AtomicTransformer(nn.Module):
         dropout_prob: float = 0.0,
         bias: bool = False,
         initial_norm: bool = True,
-        rbf_dim: int = 16,
-        rbf_dmax: float = 20.0,
-        time_scale: float = 10.0,
-        eps: float = 1e-8,
     ) -> None:
-        super().__init__()
+        super(AtomicTransformerFlow, self).__init__()
 
         self.encoder = OptimizedAtomicEncoder(
             node_feats_in=node_feats_in,
@@ -376,15 +365,6 @@ class AtomicTransformer(nn.Module):
             dropout_prob=dropout_prob,
             bias=bias,
             initial_norm=initial_norm,
-        )
-        self.ebm = EnergyEstimator(
-            c_atoms=c_atoms,
-            c_pairs=c_pairs,
-            rbf_dim=rbf_dim,
-            rbf_dmax=rbf_dmax,
-            dropout_prob=dropout_prob,
-            time_scale=time_scale,
-            eps=eps,
         )
 
     def forward(
@@ -425,7 +405,7 @@ class AtomicTransformer(nn.Module):
         pair_mask: Tensor,
         target_velocity: Tensor,
     ) -> Dict[str, Tensor]:
-        velocity, x_h, pair_repr = self.forward_flow(
+        velocity, x_h, pair_repr = self.forward(
             x_t=x_t,
             time=time,
             attr=attr,

@@ -9,8 +9,9 @@ from lightning import LightningModule
 
 from typing import Optional
 
-from ..utils.logging import RankedLogger
 from ..pipeline.pipeline import Pipeline
+from ..utils.logging import RankedLogger
+from ..utils.graph_utils import GraphAdapter
 
 
 log = RankedLogger(__name__, on_rank_zero=True)
@@ -129,3 +130,50 @@ class PreTrainerFlow(LightningModule):
         super().optimizer_step(*args, **kwargs)
         if self.ema is not None:
             self.ema.update()
+
+
+class PreTrainerATFlow(PreTrainerFlow):
+    """
+        Same as PreTrainerFlow, but for Atomic Transformer Flow models.
+        We only need to override the training step to use the new model.
+    """
+
+    def __init__(self, config: DictConfig) -> None:
+        super(PreTrainerATFlow, self).__init__(config)
+    
+    def training_step(self, batch: dgl.DGLGraph, batch_idx: int) -> Tensor:
+        # adapt the dgl graph 
+        adapter = GraphAdapter(batch)
+
+        # randomly rotate input coordinates and target velocity fields
+        batch = adapter.apply_random_rotations(batch, node_keys=["xt", "vt"])
+
+        # convert to padded tensors
+        data = adapter.graph_to_padded_tensor(batch, use_rbf=True)
+
+        # unpack the training data
+        time, x_t, attr, atom_index, pair_feats, atom_mask, pair_mask, target_velocity = data
+
+        # forward pass
+        loss_dict = self.flow.training_step(
+            x_t=x_t,
+            time=time,
+            attr=attr,
+            atom_index=atom_index,
+            pair_feats=pair_feats,
+            atom_mask=atom_mask,
+            pair_mask=pair_mask,
+            target_velocity=target_velocity,
+        )
+
+        # log loss
+        for key, value in loss_dict.items():
+            self.log(
+                f"pretrain/flow/{key}",
+                value,
+                on_step=False,
+                on_epoch=True,
+                prog_bar=True,
+                batch_size=batch.batch_size,
+            )
+        return loss_dict["loss"]

@@ -18,8 +18,8 @@ from lightning import Callback, Trainer
 rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
 
 
+from aita.training.pretrain_flow import PreTrainerFlow, PreTrainerATFlow
 from aita.training.pretrain_ebm import PreTrainerEBM
-from aita.training.pretrain_flow import PreTrainerFlow
 from aita.training.common import fetch_wandb_logger
 from aita.utils.logging import RankedLogger
 from aita.utils.configs import print_config
@@ -48,6 +48,18 @@ def has_tensor_cores() -> bool:
     return cap >= (8, 0)  # Ampere+ devices expose FP32 tensor cores
 
 
+def which_pretrainer(cfg: DictConfig) -> Union[PreTrainerFlow, PreTrainerEBM, PreTrainerATFlow]:
+    if cfg.get("task_name").endswith("flow"):
+        if cfg.get("flow").get("_target_").endswith("AtomicTransformerFlow"):
+            return PreTrainerATFlow(cfg)
+        else:
+            return PreTrainerFlow(cfg)
+    elif cfg.get("task_name").endswith("ebm"):
+        return PreTrainerEBM(cfg)
+    else:
+        raise ValueError(f"Invalid task name: {cfg.get('task_name')}")
+
+
 @task_wrapper
 def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """Trains the model. Can additionally evaluate on a testset, using best weights obtained during
@@ -71,7 +83,7 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     is_flow = task_name.endswith("flow")
 
     log.log(20, f"Instantiating Pre-Training module...")
-    model: Union[PreTrainerFlow, PreTrainerEBM] = PreTrainerFlow(cfg) if is_flow else PreTrainerEBM(cfg)
+    model: Union[PreTrainerFlow, PreTrainerEBM] = which_pretrainer(cfg)
 
     log.log(20, "Instantiating callbacks...")
     callbacks: List[Callback] = instantiate_callbacks(cfg.get("callbacks"))
