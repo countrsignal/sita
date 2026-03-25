@@ -1,14 +1,10 @@
 import torch
 from torch import nn, Tensor
 import torch.nn.functional as F
-from torch.nn.parameter import Parameter
 from einops import repeat
 
-from itertools import chain
-from typing import Tuple, Any, Iterator, Dict, Union
+from typing import Tuple, Dict, Union
 
-from .modules.encoders import AtomicEncoder
-from .modules.decoders import AtomicDecoder
 from .modules.decoder_opt import OptimizedAtomicDecoder
 from .modules.atomic_encoder_opt import OptimizedAtomicEncoder
 
