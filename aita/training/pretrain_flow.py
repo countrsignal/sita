@@ -152,7 +152,7 @@ class PreTrainerATFlow(PreTrainerFlow):
         data = adapter.graph_to_padded_tensor(batch, use_rbf=True)
 
         # unpack the training data
-        time, x_t, attr, atom_index, pair_feats, atom_mask, pair_mask, target_velocity = data
+        target_velocity, time, x_t, attr, atom_index, pair_feats, atom_mask, pair_mask = data
 
         # forward pass
         loss_dict = self.flow.training_step(
