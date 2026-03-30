@@ -13,7 +13,14 @@ from ..layers.gvp import _norm_no_nan
 from ..layers.primitives import LinearNoBias
 from ..layers.attention_block import AttentionBlock
 from ..layers.gvp import GVPConv, NodePositionUpdate, EdgeUpdate, _rbf
-from ..layers.spatial import VelocityProjection, VelocityUpdate, VelocityLayerNorm, PairTransition
+from ..layers.spatial import (
+    VelocityProjection,
+    VelocityUpdate,
+    VelocityLayerNorm,
+    VelocityProjectionV2,
+    VelocityUpdateV2,
+    PairTransition,
+)
 
 class GVP_Decoder(nn.Module):
 
@@ -200,3 +207,70 @@ class AtomicDecoder(nn.Module):
         # velocity: (..., 3)
 
         return velocity.squeeze(-2), x_h
+
+
+class AtomicDecoderEBM(nn.Module):
+    """Atomic decoder for EBM models."""
+
+    def __init__(
+        self,
+        c_atoms: int,
+        c_pairs: int,
+        n_heads: int = 8,
+        n_layers: int = 5,
+        dropout_prob: float = 0.0,
+        bias: bool = False,
+        initial_norm: bool = True,
+    ) -> None:
+        super().__init__()
+
+        self.c_atoms = c_atoms
+        self.c_pairs = c_pairs
+        self.n_heads = n_heads
+        self.n_layers = n_layers
+        self.dropout_prob = dropout_prob
+        self.bias = bias
+        self.initial_norm = initial_norm
+
+        self.pair_bias_norm = nn.LayerNorm(c_pairs)
+        self.pair_bias_proj = LinearNoBias(c_pairs, n_heads * n_layers)
+
+        self.attention_blocks = nn.ModuleList([])
+        for idx in range(n_layers):
+            self.attention_blocks.append(
+                AttentionBlock(
+                    c_atoms=c_atoms,
+                    c_pairs=c_pairs,
+                    n_heads=n_heads,
+                    dropout_prob=dropout_prob,
+                    bias=bias,
+                    initial_norm=initial_norm,
+                )
+            )
+
+    def forward(
+        self,
+        x_h: Tensor,
+        pair_repr: Tensor,
+        atom_mask: Tensor,
+        pair_mask: Tensor,
+    ) -> Tensor:
+
+        B, N = pair_repr.shape[:2]
+        all_biases = self.pair_bias_proj(self.pair_bias_norm(pair_repr))
+        all_biases = (
+            all_biases
+            .view(B, N, N, self.n_layers, self.n_heads)
+            .permute(3, 0, 4, 1, 2)
+        )
+        pad_mask = torch.where(
+            atom_mask[:, None, None, :], 0.0, torch.finfo(x_h.dtype).min,
+        )
+        all_biases = all_biases + pad_mask.unsqueeze(0)
+
+        for idx in range(self.n_layers):
+            x_h = self.attention_blocks[idx](
+                x=x_h, mask=atom_mask, edge_repr=pair_repr,
+                attn_bias=all_biases[idx],
+            )
+        return x_h

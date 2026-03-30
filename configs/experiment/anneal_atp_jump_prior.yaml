@@ -7,7 +7,7 @@
 # this allows you to overwrite only specified parameters
 defaults:
   - override /dataset: generated_single_mol
-  - override /energy: adp
+  - override /energy: atp
   - override /ebm: default
   - override /flow: vfv2
   - override /optimizer: adam
@@ -15,23 +15,28 @@ defaults:
 
 seed: 12345
 
-task_name: "anneal_adp"
+task_name: "anneal_atp"
 
-tags: ["Bootstrap", "ADP", "Jump-Prior", "Root-Temp-Ratio", "EBM-400epochs", "Flow-200epochs", "Q99"]
+tags: ["Bootstrap", "ATP", "Jump-Prior", "Root-Temp-Ratio", "EBM-400epochs", "Flow-200epochs", "Q99"]
 
 logger:
   wandb:
     tags: ${tags}
 
 dataset:
-  pdb_id: "alanine_dipeptide"
+  pdb_id: "alanine_tripeptide"
 
 interpolant:
   _partial_: true
   plan: null
 
 flow:
-  n_features: 24
+  n_features: 36
+
+ebm:
+  net:
+    num_features: 36
+    num_layers: 8
 
 optimizer:
   lr: 1e-3
@@ -41,16 +46,18 @@ optimizer:
 #########################
 
 temperature_ladder: [755.95, 555.52, 408.24, 300.00]
-n_epochs_finetune_ebm: [400, 400, 400] # <<!>> LONG EBM
-n_epochs_finetune_flow: [200, 200, 200]
+n_epochs_finetune_ebm: [400, 400, 400, 400] # <<!>> LONG EBM
+batch_size_finetune_ebm: 512
+n_epochs_finetune_flow: [200, 200, 200, 200]
+batch_size_finetune_flow: 400
 era_ckpt_dir: ${paths.output_dir}/era_ckpts
 ebm_inspection_interval: 50
 flow_inspection_interval: 50
 
 # ${paths.root_dir}/experimental_results/ebm_ema_model_1200K.pth
-ebm_model_ckpt: ${paths.root_dir}/experimental_results/pretrain_ebm/runs/2026-01-21_21-15-28/ema_model.pth
+ebm_model_ckpt: ${paths.root_dir}/experimental_results/pretrain_ebm/runs/2026-03-27_13-59-59/ema_model.pth
 
-flow_model_ckpt: ${paths.root_dir}/experimental_results/pretrain_flow/runs/2026-01-18_14-56-35/ema_model.pth
+flow_model_ckpt: ${paths.root_dir}/experimental_results/pretrain_flow/runs/2026-03-15_11-58-15/ema_model.pth
 initial_flow_samples_path: null #${paths.root_dir}/experimental_results/flow_samples_1200K.npy
 
 iw_quantile: 0.99

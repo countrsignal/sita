@@ -1,15 +1,15 @@
 #!/bin/bash
-#SBATCH --job-name=AITA_anneal_adp_jump_prior
+#SBATCH --job-name=AITA_anneal_atp_jump_prior
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:1
 #SBATCH --ntasks-per-node=2
 #SBATCH --exclude=g016,g017,g018,g019
-#SBATCH --time=12-0:00:00
+#SBATCH --time=16-0:00:00
 #SBATCH --partition=koes_gpu
 #SBATCH --mem=100G
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=dap181@pitt.edu
-#SBATCH --output=/net/pulsar/home/koes/dap181/labspace/aita/scripts/logs/aita-anneal-adp-jump-prior-long-11.out
+#SBATCH --output=/net/pulsar/home/koes/dap181/labspace/aita/scripts/logs/aita-anneal-atp-jump-prior.out
 
 
 ############################
@@ -30,7 +30,7 @@ else
     PROJECT_ROOT=$(dirname "$SCRIPT_DIR")
 fi
 
-PRETRAIN_SCRIPT="$PROJECT_ROOT/jump_anneal_adp.py"
+PRETRAIN_SCRIPT="$PROJECT_ROOT/jump_anneal.py"
 
 cd "$PROJECT_ROOT"
 
@@ -44,9 +44,8 @@ echo "WANDB_ENTITY='${USERNAME}'" > .env
 ## Launch Training Script ##
 ############################
 echo "Launching training script..."
-python "$PRETRAIN_SCRIPT" experiment=anneal_adp_jump_prior \
-        trainer.max_epochs=200 \
-        loader.batch_size=512
+python "$PRETRAIN_SCRIPT" experiment=anneal_atp_jump_prior \
+        trainer.max_epochs=200
 
 echo "Training COMPLETE."
 exit 0

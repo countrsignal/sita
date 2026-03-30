@@ -137,7 +137,6 @@ class PreTrainerEBM(LightningModule):
                 flow_model=flow_model,
                 interpolant=interpolant,
                 method=self.hparams.sample_from_flow.method,
-                tsr_params=self.hparams.sample_from_flow.tsr_params,
             )
             log.log(20, "Data generation completed.")
 

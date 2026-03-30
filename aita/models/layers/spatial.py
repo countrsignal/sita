@@ -12,6 +12,18 @@ from .primitives import LinearNoBias, LayerNormEps
 from .triangular_mult import TriangleMultiplicationIncoming, TriangleMultiplicationOutgoing
 
 
+def _vec_norm(vectors: Tensor, mask: Tensor, eps: float = 1e-5) -> Tensor:
+    """GVP-style non-trainable vector normalisation (non-compiled)."""
+    vn = vectors.square().sum(-1, keepdim=True)
+    vn = torch.sqrt(vn.mean(-2, keepdim=True) + eps) + eps
+    return (vectors / vn) * mask[..., None, None]
+
+
+def _norm(x: Tensor, dim: int = -1, keepdim: bool = False, eps: float = 1e-8) -> Tensor:
+    """L2 norm clamped above *eps*."""
+    return torch.sqrt(x.square().sum(dim, keepdim=keepdim).clamp(min=eps))
+
+
 class VelocityLayerNorm(nn.Module):
     """Nontrainable norm for vector features, following GVPLayerNorm.
 
@@ -70,6 +82,25 @@ class VelocityProjection(nn.Module):
         vfs = vfs.view(x_h.shape[0], -1, self.n_vecs, 3)
         vfs = self.vec_norm(vfs, atom_mask)
         return vfs
+
+
+class VelocityProjectionV2(nn.Module):
+    """Non-compiled VelocityProjection with state-dict keys matching the
+    optimized version (``w1.weight``, ``w2.weight``)."""
+
+    __constants__ = ["n_vecs"]
+
+    def __init__(self, n_vecs: int, c_atoms: int) -> None:
+        super().__init__()
+        self.n_vecs = n_vecs
+        self.w1 = nn.Linear(c_atoms, c_atoms, bias=False)
+        self.w2 = nn.Linear(c_atoms, n_vecs * 3, bias=False)
+
+    def forward(self, x_h: Tensor, atom_mask: Tensor) -> Tensor:
+        vfs = self.w2(F.silu(self.w1(x_h)))
+        vfs = vfs * atom_mask.unsqueeze(-1)
+        vfs = vfs.unflatten(-1, (self.n_vecs, 3))
+        return _vec_norm(vfs, atom_mask)
 
 
 class VelocityUpdate(nn.Module):
@@ -146,6 +177,78 @@ class VelocityUpdate(nn.Module):
 
         vectors_out = vectors_out * atom_mask[..., None, None]
         feats_out = feats_out * atom_mask.unsqueeze(-1)
+
+        return vectors_out, feats_out
+
+
+class VelocityUpdateV2(nn.Module):
+    """Non-compiled VelocityUpdate with state-dict keys matching the
+    optimized version (``Wh``, ``Wu``, ``feats_linear``, ``gate_linear``).
+
+    Weight matrices are stored in ``(out, in)`` layout so the forward pass
+    uses plain ``torch.matmul`` with no runtime transpose.
+    """
+
+    __constants__ = [
+        "n_vecs", "n_vecs_out", "c_atoms", "dim_h",
+        "_multi_vec", "_residual",
+    ]
+
+    def __init__(
+        self,
+        n_vecs: int,
+        c_atoms: int,
+        n_vecs_out: Optional[int] = None,
+        residual: bool = True,
+    ) -> None:
+        super().__init__()
+
+        self.n_vecs = n_vecs
+        self.n_vecs_out = n_vecs if n_vecs_out is None else n_vecs_out
+        self.c_atoms = c_atoms
+        self._multi_vec = self.n_vecs_out > 1
+        self._residual = residual and (self.n_vecs_out == n_vecs)
+
+        dim_h = max(n_vecs, self.n_vecs_out)
+        self.dim_h = dim_h
+
+        wh_k = 1.0 / math.sqrt(n_vecs)
+        self.Wh = nn.Parameter(
+            torch.zeros(dim_h, n_vecs).uniform_(-wh_k, wh_k),
+        )
+
+        wu_k = 1.0 / math.sqrt(dim_h)
+        self.Wu = nn.Parameter(
+            torch.zeros(self.n_vecs_out, dim_h).uniform_(-wu_k, wu_k),
+        )
+
+        self.feats_linear = nn.Linear(c_atoms + dim_h, c_atoms)
+
+        if self._multi_vec:
+            self.gate_linear = nn.Linear(c_atoms, self.n_vecs_out)
+        else:
+            self.gate_linear = None
+
+    def forward(self, vfs: Tensor, x_h: Tensor, atom_mask: Tensor) -> Tuple[Tensor, Tensor]:
+        Vh = torch.matmul(self.Wh, vfs)   # (H,V) @ (...,V,3) -> (...,H,3)
+        Vu = torch.matmul(self.Wu, Vh)     # (U,H) @ (...,H,3) -> (...,U,3)
+
+        sh = _norm(Vh, dim=-1)             # (..., H)
+        feats_out = F.silu(
+            self.feats_linear(torch.cat((x_h, sh), dim=-1))
+        )
+
+        if self._multi_vec:
+            gate = torch.sigmoid(self.gate_linear(feats_out).unsqueeze(-1))
+            vectors_out = gate * Vu
+        else:
+            vectors_out = Vu
+
+        vectors_out = vectors_out * atom_mask[..., None, None]
+        feats_out = feats_out * atom_mask.unsqueeze(-1)
+
+        if self._residual:
+            vectors_out = _vec_norm(vfs + vectors_out, atom_mask)
 
         return vectors_out, feats_out
 

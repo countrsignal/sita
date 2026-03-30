@@ -334,7 +334,6 @@ class AtomicTransformerFlow(nn.Module):
         self,
         node_feats_in: int,
         edge_feats_in: int,
-        n_vecs: int,
         c_atoms: int,
         c_pairs: int,
         n_heads: int = 8,
@@ -344,7 +343,7 @@ class AtomicTransformerFlow(nn.Module):
         initial_norm: bool = True,
     ) -> None:
         super(AtomicTransformerFlow, self).__init__()
-
+        self.n_layers = n_layers
         self.encoder = OptimizedAtomicEncoder(
             node_feats_in=node_feats_in,
             edge_feats_in=edge_feats_in,
@@ -353,7 +352,6 @@ class AtomicTransformerFlow(nn.Module):
             dropout_prob=dropout_prob,
         )
         self.decoder = OptimizedAtomicDecoder(
-            n_vecs=n_vecs,
             c_atoms=c_atoms,
             c_pairs=c_pairs,
             n_heads=n_heads,

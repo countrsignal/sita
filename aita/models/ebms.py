@@ -109,7 +109,7 @@ class EBM(nn.Module):
             return_logprob=True,
             require_grad=False, # NOTE: no gradient tracking for the NCE loss
         )
-        loss_nce = -torch.mean(
+        nce_loss = -torch.mean(
             energies - torch.logsumexp(
                 torch.cat([energies, negative_energies], dim=-1),
                 dim=-1,
@@ -118,10 +118,10 @@ class EBM(nn.Module):
         )
 
         # total loss
-        loss = score_loss + loss_nce
+        loss = score_loss + nce_loss
 
         return {
             "loss": loss,
             "score_loss": score_loss,
-            "loss_nce": loss_nce,
+            "nce_loss": nce_loss,
         }

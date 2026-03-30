@@ -22,6 +22,7 @@ notebooks/
 !build_env.sh
 
 # directories
+testx/
 scripts/logs/
 experimental_results
 sim_scripts

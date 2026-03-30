@@ -115,6 +115,30 @@ class SimulationDataset(Dataset):
         g.ndata["x1"] = self.samples[index].squeeze(0) # (num_nodes, 3)
         return g
 
+    def subsample(self, subsample_size: int) -> None:
+        """Randomly subsample the dataset in-place, keeping per-molecule proportions."""
+        n = len(self.samples)
+        if subsample_size >= n:
+            log.log(20, f"Subsample size ({subsample_size}) >= dataset size ({n}), skipping.")
+            return
+
+        indices = torch.randperm(n)[:subsample_size].sort().values.tolist()
+
+        new_samples = [self.samples[i] for i in indices]
+        new_backmap: Dict[int, str] = {}
+        retained_molecules = set()
+        for new_idx, old_idx in enumerate(indices):
+            mol_id = self.backmap[old_idx]
+            new_backmap[new_idx] = mol_id
+            retained_molecules.add(mol_id)
+
+        self.molecules = {k: v for k, v in self.molecules.items() if k in retained_molecules}
+        self.backmap = new_backmap
+        self.samples = new_samples
+
+        log.log(20, f"Subsampled dataset: {n} -> {len(self.samples)} samples, "
+                     f"{len(self.molecules)} molecules retained.")
+
     def get_train_dataloader(self, batch_size: int, num_workers: int = 0, pin_memory: bool = False) -> dgl.dataloading.GraphDataLoader:
         return dgl.dataloading.GraphDataLoader(
             self,

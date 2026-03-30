@@ -181,7 +181,11 @@ class AnnealerADP(LightningModule):
         log.log(20, f"Saved EMA model weights to {filename}")
 
     def train_dataloader(self):
-        return self.dataset.get_train_dataloader(self.hparams.loader.batch_size, self.hparams.loader.num_workers, self.hparams.loader.pin_memory)
+        if self.training_era == "ebm":
+            batch_size = self.hparams.get("batch_size_finetune_ebm", self.hparams.loader.batch_size)
+        else:
+            batch_size = self.hparams.get("batch_size_finetune_flow", self.hparams.loader.batch_size)
+        return self.dataset.get_train_dataloader(batch_size, self.hparams.loader.num_workers, self.hparams.loader.pin_memory)
 
     def configure_optimizers(self):
         if self.training_era == "ebm":

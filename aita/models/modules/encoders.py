@@ -1,11 +1,19 @@
 import torch
 from torch import nn, Tensor
 from typing import Tuple
+import torch.nn.functional as F
 
 from ..layers.layernorm import AdaLN
 from ..layers.primitives import LinearNoBias
 from ..layers.transition import ResidualTransition
-from ..layers.embeddings import FourierEmbedding, PositionalEncoding, PairEmbedding
+from ..layers.embeddings import (
+    FourierEmbedding,
+    PositionalEncoding,
+    PairEmbedding,
+    PositionalEncodingCached,
+    AdaLNFused,
+    PairEmbeddingFused,
+)
 
 
 @torch.compile
@@ -194,6 +202,117 @@ class AtomicEncoder(nn.Module):
         # x_h: (batch_size, n_atoms, c_atoms)
 
         # Apply node mask
+        x_h = x_h * atom_mask.unsqueeze(-1)
+
+        return x_h, edge_repr
+
+
+# ---------------------------------------------------------------------------
+# V2 (non-compiled, state-dict-compatible with Opt)
+# ---------------------------------------------------------------------------
+
+
+class AttributeEncoderV2(nn.Module):
+    """Non-compiled attribute encoder with fused sub-layers.
+
+    State-dict-compatible with ``AttributeEncoderOpt``: uses the same
+    parameter names and shapes (``initial_w``, ``time_to_attr.s_proj``,
+    etc.) but never calls ``torch.compile``, making it safe for
+    ``torch.autograd.grad(..., create_graph=True)``.
+    """
+
+    def __init__(
+        self,
+        n_features: int,
+        n_hidden: int,
+    ) -> None:
+        super().__init__()
+
+        self.temporal_embedding = FourierEmbedding(n_hidden)
+        self.positional_embedding = PositionalEncodingCached(n_hidden)
+        self.initial_w = nn.Linear(n_features + n_hidden, n_hidden)
+        self.time_to_attr = AdaLNFused(n_hidden, n_hidden)
+
+    def forward(self, time: Tensor, attr: Tensor, atom_index: Tensor) -> Tensor:
+        th = self.temporal_embedding(time)
+        ph = self.positional_embedding(
+            atom_index.reshape(-1),
+        ).reshape(atom_index.size(0), atom_index.size(1), -1)
+        zs = F.silu(self.initial_w(torch.cat([attr, ph], dim=-1)))
+        return self.time_to_attr(zs, th)
+
+
+class AtomicEncoderV2(nn.Module):
+    """Non-compiled atomic encoder with fused sub-layers.
+
+    State-dict-compatible with ``OptimizedAtomicEncoder``: uses the same
+    ``atom_w1`` / ``atom_w2`` linears (instead of ``nn.Sequential``),
+    ``PairEmbeddingFused`` (instead of ``PairEmbeddingOpt``), and plain
+    Python message aggregation (instead of ``@torch.compile``).
+    """
+
+    def __init__(
+        self,
+        node_feats_in: int,
+        edge_feats_in: int,
+        c_atoms: int,
+        c_pairs: int,
+        dropout_prob: float = 0.0,
+    ) -> None:
+        super().__init__()
+
+        self.node_feats_in = node_feats_in
+        self.edge_feats_in = edge_feats_in
+        self.c_atoms = c_atoms
+        self.c_pairs = c_pairs
+        self.dropout_prob = dropout_prob
+
+        self.xyz_embedder = LinearNoBias(3, c_atoms)
+        self.attr_encoder = AttributeEncoderV2(
+            n_features=node_feats_in,
+            n_hidden=c_atoms,
+        )
+        self.atom_w1 = LinearNoBias(2 * c_atoms, c_atoms)
+        self.atom_w2 = LinearNoBias(c_atoms, c_atoms)
+
+        self.pair_embedder = PairEmbeddingFused(
+            edge_feats_in=edge_feats_in,
+            edge_feats_out=c_pairs,
+            dropout_prob=dropout_prob,
+        )
+        self.message_proj = LinearNoBias(c_pairs, c_atoms)
+        self.interaction_residual = ResidualTransition(
+            dim=c_atoms, hidden=c_atoms, dropout_prob=dropout_prob,
+        )
+
+    def forward(
+        self,
+        x_t: Tensor,
+        time: Tensor,
+        attr: Tensor,
+        atom_index: Tensor,
+        pair_feats: Tensor,
+        atom_mask: Tensor,
+        pair_mask: Tensor,
+    ) -> Tuple[Tensor, Tensor]:
+
+        x_h = self.xyz_embedder(x_t)
+
+        attr_init = self.attr_encoder(
+            time=time, attr=attr, atom_index=atom_index,
+        )
+
+        x_h = self.atom_w2(F.silu(self.atom_w1(
+            torch.cat([x_h, attr_init], dim=-1),
+        )))
+        x_h = x_h * atom_mask.unsqueeze(-1)
+
+        edge_repr = self.pair_embedder(
+            pair_features=pair_feats, pair_mask=pair_mask,
+        )
+
+        msgs = self.message_proj(edge_repr.sum(dim=-2))
+        x_h = self.interaction_residual(x_h, msgs)
         x_h = x_h * atom_mask.unsqueeze(-1)
 
         return x_h, edge_repr
