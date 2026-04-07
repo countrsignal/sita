@@ -25,7 +25,7 @@ class AttentionBlock(nn.Module):
         assert c_atoms % n_heads == 0, "c_atoms must be divisible by n_heads"
         self.c_atoms = c_atoms
         self.n_heads = n_heads
-        self.head_dim = c_atoms
+        self.head_dim = c_atoms // n_heads
         self.scale = 1.0 / math.sqrt(self.head_dim)
         self.dropout_prob = dropout_prob
 
@@ -48,6 +48,7 @@ class AttentionBlock(nn.Module):
         x: Tensor,
         mask: Tensor,
         residual: Optional[Tensor] = None,
+        attn_bias: Optional[Tensor] = None,
     ) -> Tensor:
         # x:         (B, N, c_atoms)
         # mask:      (B, N)            — True = valid token
@@ -61,13 +62,13 @@ class AttentionBlock(nn.Module):
         # (B, n_heads, N, head_dim)
 
 
-        attn_mask = mask[:, None, None, :]
+        # attn_mask = mask[:, None, None, :]
         # NOTE: mask values are TRUE for valid tokens and FALSE for padding tokens
         # (B, 1, 1, N)
 
         attn_out = F.scaled_dot_product_attention(
             q, k, v,
-            attn_mask=attn_mask,
+            attn_mask=attn_bias,
             dropout_p=self.dropout_prob if self.training else 0.0,
             scale=self.scale,
         )

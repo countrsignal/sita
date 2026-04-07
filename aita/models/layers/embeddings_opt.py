@@ -232,8 +232,8 @@ class PairEmbeddingOpt(nn.Module):
         super().__init__()
 
         self.dropout_prob = dropout_prob
-        self.mlp_w1 = nn.Linear(edge_feats_in, edge_feats_out, bias=False)
-        self.mlp_w2 = nn.Linear(edge_feats_out, edge_feats_out, bias=False)
+        self.mlp_w1 = nn.Linear(edge_feats_in, edge_feats_out, bias=True)
+        self.mlp_w2 = nn.Linear(edge_feats_out, edge_feats_out, bias=True)
 
         self.tri_mul_in = TriangleMultiplicationIncomingOpt(c_pairs=edge_feats_out)
         self.tri_mul_out = TriangleMultiplicationOutgoingOpt(c_pairs=edge_feats_out)

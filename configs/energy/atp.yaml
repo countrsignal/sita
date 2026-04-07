@@ -5,4 +5,4 @@ pdb_filename: alanine_tripeptide.pdb
 dimensionality: 99
 n_particles: 33
 spatial_dim: 3
-energy_batch_size: 10000
+energy_batch_size: 30000

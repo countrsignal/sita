@@ -99,6 +99,8 @@ class OptimizedAtomicEncoder(nn.Module):
         edge_feats_in: int,
         c_atoms: int,
         c_pairs: int,
+        n_heads: int = 8,
+        n_layers: int = 5,
         dropout_prob: float = 0.0,
     ) -> None:
 
@@ -109,24 +111,39 @@ class OptimizedAtomicEncoder(nn.Module):
         self.c_atoms = c_atoms
         self.c_pairs = c_pairs
         self.dropout_prob = dropout_prob
+        self.n_heads = n_heads
+        self.n_layers = n_layers
 
         self.xyz_embedder = LinearNoBias(3, c_atoms)
         self.attr_encoder = AttributeEncoderOpt(
             n_features=node_feats_in,
             n_hidden=c_atoms,
         )
-        self.atom_w1 = LinearNoBias(2 * c_atoms, c_atoms)
-        self.atom_w2 = LinearNoBias(c_atoms, c_atoms)
 
         self.pair_embedder = PairEmbeddingOpt(
             edge_feats_in=edge_feats_in,
             edge_feats_out=c_pairs,
             dropout_prob=dropout_prob,
         )
+
         self.message_proj = LinearNoBias(c_pairs, c_atoms)
         self.interaction_residual = ResidualTransition(
             dim=c_atoms, hidden=c_atoms, dropout_prob=dropout_prob,
         )
+
+        self.enc_attn_layers = nn.ModuleList([])
+        for _ in range(n_layers):
+            self.enc_attn_layers.append(
+                nn.TransformerEncoderLayer(
+                    d_model=c_atoms,
+                    nhead=n_heads,
+                    dropout=dropout_prob,
+                    batch_first=True,
+                    activation="gelu",
+                    norm_first=True,
+                    bias=False,
+                )
+            )
 
     def forward(
         self,
@@ -145,9 +162,7 @@ class OptimizedAtomicEncoder(nn.Module):
             time=time, attr=attr, atom_index=atom_index,
         )
 
-        x_h = self.atom_w2(F.silu(self.atom_w1(
-            torch.cat([x_h, attr_init], dim=-1),
-        )))
+        x_h = x_h + attr_init
         x_h = x_h * atom_mask.unsqueeze(-1)
 
         edge_repr = self.pair_embedder(
@@ -161,5 +176,9 @@ class OptimizedAtomicEncoder(nn.Module):
             interaction_residual=self.interaction_residual,
             atom_mask=atom_mask,
         )
+
+        for layer in self.enc_attn_layers:
+            x_h = layer(x_h, src_key_padding_mask=~atom_mask)
+            x_h = x_h * atom_mask.unsqueeze(-1)
 
         return x_h, edge_repr

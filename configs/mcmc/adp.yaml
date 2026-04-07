@@ -1,0 +1,45 @@
+# @package _global_
+
+# to execute this experiment run:
+# python train.py experiment=example
+
+# all parameters below will be merged with parameters from default configurations set above
+# this allows you to overwrite only specified parameters
+defaults:
+  - override /interpolant: default
+  - override /energy: adp
+  - override /ebm: default
+  - override /flow: vfv2
+
+
+seed: 12345
+
+task_name: "mcmc_adp"
+
+tags: ["inference", "mcmc", "adp"]
+
+logger:
+  wandb:
+    tags: ${tags}
+
+flow:
+  n_features: 24
+
+flow_model_ckpt: ${paths.root_dir}/experimental_results/pretrain_flow/runs/2026-01-18_14-56-35/ema_model.pth
+
+ebm_model_ckpt: ${paths.root_dir}/experimental_results/anneal_adp/runs/2026-01-31_00-27-17/era_ckpts/ebm_ema_model_755K.pth
+
+n_steps: 10
+
+run_diagnostics: True
+
+temperature_ladder: [[1200.00, 755.95], [755.95, 555.52], [555.52, 300.00]]
+
+mcmc:
+  _target_: aita.mcmc.IMH
+  pdb_path: ${paths.root_dir}/data/debug/alanine_dipeptide.pdb
+  n_chains: 5000
+  n_timesteps: 100
+  sampling_kwargs:
+    method: "dopri5"
+    prior_beta: null

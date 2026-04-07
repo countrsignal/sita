@@ -476,7 +476,7 @@ class GraphAdapter:
                 padded_coords, D_min=D_min, D_max=D_max, D_count=D_count,
             )
             pair_mask = rbf_mask
-            padded_edges = torch.cat([padded_edges, rbf_feats, displacements], dim=-1)
+            padded_edges = torch.cat([padded_edges, rbf_feats], dim=-1)
 
         # pair_mask from edges_to_pair_tensor only covers padding; add diagonal
         diag = torch.eye(max_n, device=self.device, dtype=torch.bool).unsqueeze(0)

@@ -15,7 +15,7 @@ seed: 12345
 
 task_name: "pretrain_flow"
 
-tags: ["Pretrain", "Flow", "ADP", "Temperature"]
+tags: ["Pretrain", "AT", "No-AdaLN-Bias", "Flow", "ADP", "Temperature"]
 
 logger:
   wandb:

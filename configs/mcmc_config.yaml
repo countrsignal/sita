@@ -4,27 +4,19 @@
 # order of defaults determines the order in which configs override each other
 defaults:
   - _self_
-  - callbacks: default
-  - dataset: null
-  - loader: default
   - interpolant: default
-  - pipeline: null
   - energy: null
   - ebm: null
   - flow: null
-  - optimizer: null
-  - scheduler: null
-  - ema: default
   - logger: wandb # set logger here or use command line (e.g. `python train.py logger=tensorboard`)
   - paths: default
-  - trainer: default
   - launcher: null
   - hydra: default
 
   # experiment configs allow for version control of specific hyperparameters
   # e.g. best hyperparameters for given model and datamodule
   # overwrite from command line with `python train.py experiment=gmm_byob"`
-  - experiment: null
+  - mcmc: null
 
   # config for hyperparameter optimization
   - hparams_search: null
@@ -37,26 +29,12 @@ defaults:
   - debug: null
 
 # task name, determines output directory path
-task_name: "train"
+task_name: "inference_mcmc"
 
 # tags to help you identify your experiments
 # you can overwrite this in experiment configs
 # overwrite from command line with `python train.py tags="[first_tag, second_tag]"`
-tags: ["dev"]
-
-# overwrite metrics in experiment configs
-# or from command line with `python train.py metrics="[first_metric, second_metric]"`
-metrics: null
-
-# set False to skip model training
-train: True
-
-# evaluate on test set, using best model weights achieved during training
-# lightning chooses best weights based on the metric specified in checkpoint callback
-test: False
-
-# simply provide checkpoint path to resume training
-ckpt_path: null
+tags: ["inference", "mcmc"]
 
 # seed for random number generators in pytorch, numpy and python.random
 seed: null

@@ -18,6 +18,20 @@ from .layers.embeddings_opt import FourierEmbeddingOpt, AdaLNOpt
 # functions: loss
 ################################################################################
 
+def remove_com(x: Tensor, atom_mask: Tensor) -> Tensor:
+    """Remove center of mass while accounting for zero-padded atoms using the mask."""
+    # x: (B, N, 3)
+    # atom_mask: (B, N)
+
+    # compute center of mass
+    com = (x * atom_mask.unsqueeze(-1)).sum(dim=-2, keepdim=True) / atom_mask.sum(dim=-1, keepdim=True).unsqueeze(-1)
+    # com: (B, 1, 3)
+
+    # remove center of mass and re-zero padded positions
+    x = (x - com) * atom_mask.unsqueeze(-1)
+    # x: (B, N, 3)
+    return x
+
 def compute_velocity_field_loss(
     preds: Tensor,
     target: Tensor,
@@ -349,6 +363,8 @@ class AtomicTransformerFlow(nn.Module):
             edge_feats_in=edge_feats_in,
             c_atoms=c_atoms,
             c_pairs=c_pairs,
+            n_heads=n_heads,
+            n_layers=n_layers,
             dropout_prob=dropout_prob,
         )
         self.decoder = OptimizedAtomicDecoder(
@@ -360,6 +376,11 @@ class AtomicTransformerFlow(nn.Module):
             bias=bias,
             initial_norm=initial_norm,
         )
+        self._dynamo_backend_setup()
+    
+    def _dynamo_backend_setup(self) -> None:
+        """Setup the dynamo backend for the model."""
+        torch._dynamo.config.cache_size_limit = self.n_layers * 2
 
     def forward(
         self,

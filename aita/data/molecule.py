@@ -7,7 +7,7 @@ from torch import Tensor, empty
 from rdkit import Chem
 from pathlib import Path
 
-from typing import Dict, List, Any, Tuple
+from typing import Dict, List, Any, Tuple, Union
 from dataclasses import dataclass, field
 
 from .features import (
@@ -91,14 +91,14 @@ class Molecule:
         return g
 
     @staticmethod
-    def from_pdb(pdb_path: str) -> "Molecule":
-        mol = Chem.MolFromPDBFile(pdb_path, removeHs=False, sanitize=False)
+    def from_pdb(pdb_path: Union[str, Path]) -> "Molecule":
+        mol = Chem.MolFromPDBFile(str(pdb_path), removeHs=False, sanitize=False)
         assert mol is not None, f"Failed to parse PDB file {pdb_path}"
         atom_dict, bond_dict = parse_mol_rdkit(mol)
         residue_type_one_hot, atom_one_hot = categorical_featurizer(atom_dict, ATOM_TYPES_ENCODING, return_concat=False)
         return Molecule(
             name=Path(pdb_path).stem,
-            pdb_path=Path(pdb_path).absolute(),
+            pdb_path=str(Path(pdb_path).absolute()),
             atom_dict=atom_dict,
             bond_dict=bond_dict,
             res_types=residue_type_one_hot,
@@ -106,7 +106,7 @@ class Molecule:
             atom_indices=torch.arange(len(atom_dict)),
         )
 
-    def coords_from_pdb(self, pdb_path: str) -> torch.Tensor:
+    def coords_from_pdb(self, pdb_path: Union[str, Path]) -> torch.Tensor:
         """
         Load 3D atom coordinates from a PDB file.
 
@@ -116,7 +116,7 @@ class Molecule:
         Returns:
             Tensor of shape (n_atoms, 3) with coordinates ordered by atom index.
         """
-        mol = Chem.MolFromPDBFile(pdb_path, removeHs=False, sanitize=False)
+        mol = Chem.MolFromPDBFile(str(pdb_path), removeHs=False, sanitize=False)
         assert mol is not None, f"Failed to parse PDB file {pdb_path}"
 
         conf = mol.GetConformer()
@@ -140,14 +140,14 @@ class Molecule:
 class ADP(Molecule):
 
     @staticmethod
-    def from_pdb(pdb_path: str) -> "ADP":
-        mol = Chem.MolFromPDBFile(pdb_path, removeHs=False, sanitize=False)
+    def from_pdb(pdb_path: Union[str, Path]) -> "ADP":
+        mol = Chem.MolFromPDBFile(str(pdb_path), removeHs=False, sanitize=False)
         assert mol is not None, f"Failed to parse PDB file {pdb_path}"
         atom_dict, bond_dict = parse_mol_rdkit(mol)
         residue_type_one_hot, atom_one_hot = DEBUG_FEATURIZERS["alanine_dipeptide"](return_concat=False)
         return ADP(
             name=Path(pdb_path).stem,
-            pdb_path=Path(pdb_path).absolute(),
+            pdb_path=str(Path(pdb_path).absolute()),
             atom_dict=atom_dict,
             bond_dict=bond_dict,
             res_types=residue_type_one_hot,
@@ -160,14 +160,14 @@ class ADP(Molecule):
 class ATP(Molecule):
 
     @staticmethod
-    def from_pdb(pdb_path: str) -> "ATP":
-        mol = Chem.MolFromPDBFile(pdb_path, removeHs=False, sanitize=False)
+    def from_pdb(pdb_path: Union[str, Path]) -> "ATP":
+        mol = Chem.MolFromPDBFile(str(pdb_path), removeHs=False, sanitize=False)
         assert mol is not None, f"Failed to parse PDB file {pdb_path}"
         atom_dict, bond_dict = parse_mol_rdkit(mol)
         residue_type_one_hot, atom_one_hot = DEBUG_FEATURIZERS["alanine_tripeptide"](return_concat=False)
         return ATP(
             name=Path(pdb_path).stem,
-            pdb_path=Path(pdb_path).absolute(),
+            pdb_path=str(Path(pdb_path).absolute()),
             atom_dict=atom_dict,
             bond_dict=bond_dict,
             res_types=residue_type_one_hot,
