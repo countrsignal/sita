@@ -93,7 +93,7 @@ def importance_weighted_resample(n_samples: int, samples: torch.Tensor, log_w_no
 # Helpers
 ################################################################################
 
-def determine_chirality_batch(cartesian_coords_batch):
+def determine_adp_chirality_batch(cartesian_coords_batch):
     # Convert Cartesian coordinates to numpy array
     coords_batch = np.array(cartesian_coords_batch)
 
@@ -116,7 +116,7 @@ def determine_chirality_batch(cartesian_coords_batch):
     return chirality_labels_batch
 
 
-def map_chirality_batch(samples: np.ndarray) -> np.ndarray:
+def map_adp_chirality_batch(samples: np.ndarray) -> np.ndarray:
     """
     Map samples to the correct chirality.
 
@@ -142,7 +142,7 @@ def map_chirality_batch(samples: np.ndarray) -> np.ndarray:
 
     back_bone_samples = samples[:, np.array([8,6,14])]
     cb_samples = samples[cb_idx[0], carbon_idx[cb_idx[1]]] [:, None, :]
-    chirality = determine_chirality_batch(np.concatenate([back_bone_samples, cb_samples], axis=1))
+    chirality = determine_adp_chirality_batch(np.concatenate([back_bone_samples, cb_samples], axis=1))
     samples_mapped = samples.copy()
     samples_mapped[chirality=="D"] *= -1
 
@@ -150,7 +150,7 @@ def map_chirality_batch(samples: np.ndarray) -> np.ndarray:
 
 
 def adp_torsion_angles(samples: np.ndarray, pdb_path: str) -> np.ndarray:
-    samples_mapped = map_chirality_batch(samples)
+    samples_mapped = map_adp_chirality_batch(samples)
     traj_samples = md.Trajectory(samples_mapped, topology=md.load_topology(pdb_path))
     phi_indices, psi_indices = [4, 6, 8, 14], [6, 8, 14, 16]
     angles = md.compute_dihedrals(traj_samples, [phi_indices, psi_indices])

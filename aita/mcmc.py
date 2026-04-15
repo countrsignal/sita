@@ -4,12 +4,14 @@ from torch import nn, Tensor
 import hydra 
 from omegaconf import DictConfig
 
+import copy
 import gc
+from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
 from pathlib import Path
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Callable, Tuple, Optional, Any, Dict, Union
+from typing import Callable, Tuple, Optional, Any, Dict, Union, List
 
 from .interpolants import Interpolant
 from .utils.logging import RankedLogger
@@ -79,6 +81,49 @@ def evaluate_log_p_and_log_q(
     # Return log probabilities
     return log_p, log_q
 
+
+@torch.inference_mode()
+def evaluate_log_q(
+    x: Tensor,
+    mol: Molecule,
+    ebm: nn.Module,
+    flush_cache: bool = True,
+) -> Tensor:
+    """
+    Evaluate only the EBM log-probability term log_q(x).
+    """
+
+    features = mol.atom_types.argmax(dim=1).unsqueeze(0).repeat(x.size(0), 1)
+    padding_mask = torch.zeros_like(features, dtype=torch.bool)
+    times = torch.ones((x.size(0), x.size(1), 1))
+
+    # Ensure all tensors are on the EBM device.
+    device = next(ebm.parameters()).device
+    features = features.to(device)
+    padding_mask = padding_mask.to(device)
+    times = times.to(device)
+    if x.device != device:
+        x = x.to(device)
+
+    log_q = ebm(
+        time=times,
+        features=features,
+        coordinates=x,
+        padding_mask=padding_mask,
+        return_logprob=True,
+        require_grad=False,
+    ).flatten()
+
+    if flush_cache:
+        del features, padding_mask, times
+        torch.cuda.empty_cache()
+        gc.collect()
+
+    return log_q
+
+
+def variance_log_w(log_w: Tensor) -> Tensor:
+    return torch.square(log_w).mean() - torch.square(log_w.mean())
 
 #############################################################################################################################
 # Classes
@@ -288,9 +333,6 @@ class MonteCarloAnnealing:
         self.diagnostics = {
             "log_acceptance_rate": [],
             "log_w_variance": [],
-            "log_w_max": [],
-            "weights_variance": [],
-            "weights_max": [],
         }
 
     def setup(self) -> None:
@@ -332,10 +374,10 @@ class MonteCarloAnnealing:
         self.flow.to(device)
         self.ebm.to(device)
 
-    def run(self, annealing_index: int) -> None:
+    def run_single(self) -> ChainState:
         # instantiate mcmc
         # > compute value prior beta
-        T_high, T_low = self.config.temperature_ladder[annealing_index]
+        T_high, T_low = self.config.T_high, self.config.T_low
         self.config.mcmc.sampling_kwargs.prior_beta = (T_low / T_high) ** 0.5
         # > instantiate full forcefield
         forcefield = self.forcefield_partial(temperature=T_low)
@@ -373,10 +415,207 @@ class MonteCarloAnnealing:
             # track diagnostics
             if self.config.run_diagnostics:
                 self.diagnostics["log_acceptance_rate"].append(log_alpha.mean().item())
-                self.diagnostics["log_w_variance"].append(chains.log_w().var().item())
-                self.diagnostics["log_w_max"].append(chains.log_w().max().item())
-                self.diagnostics["weights_variance"].append(torch.softmax(chains.log_w(), dim=0).var().item())
-                self.diagnostics["weights_max"].append(torch.softmax(chains.log_w(), dim=0).max().item())
+                self.diagnostics["log_w_variance"].append(
+                    variance_log_w(chains.log_w()).item()
+                    )
         # return chains
         log.log(20, "Monte Carlo Annealing completed.")
         return chains
+    
+    def run_parallel(self) -> ChainState:
+        # Resolve which rung on the temperature ladder to run.
+        # Initialize ladder-specific sampling parameters.
+        T_high, T_low = self.config.T_high, self.config.T_low
+        self.config.mcmc.sampling_kwargs.prior_beta = (T_low / T_high) ** 0.5
+        self.mcmc = hydra.utils.instantiate(self.config.mcmc)
+
+        # Fallback to the standard single-device path if CUDA is unavailable.
+        if not torch.cuda.is_available():
+            log.warning("CUDA is not available. Falling back to `run_single`.")
+            return self.run_single()
+
+        # This implementation assumes IMH-style independent proposals.
+        if not isinstance(self.mcmc, IMH):
+            log.warning(
+                "`run_parallel` currently supports IMH proposals only. "
+                "Falling back to `run_single`."
+            )
+            return self.run_single()
+
+        def _parse_requested_devices() -> List[torch.device]:
+            # Priority: user-provided list in config -> all visible CUDA devices.
+            requested = self.config.get("parallel_cuda_devices", None)
+            if requested is None:
+                requested = self.config.get("parallel_devices", None)
+
+            if requested is None:
+                requested = list(range(torch.cuda.device_count()))
+            elif isinstance(requested, str):
+                requested = [token.strip() for token in requested.split(",") if token.strip()]
+            elif isinstance(requested, int):
+                requested = [requested]
+            else:
+                requested = list(requested)
+
+            devices: List[torch.device] = []
+            seen = set()
+            for token in requested:
+                if isinstance(token, torch.device):
+                    dev = token
+                elif isinstance(token, str) and token.startswith("cuda"):
+                    dev = torch.device(token)
+                else:
+                    dev = torch.device(f"cuda:{int(token)}")
+
+                if dev.type != "cuda":
+                    continue
+                if dev.index is None:
+                    dev = torch.device(f"cuda:{torch.cuda.current_device()}")
+                if dev.index in seen:
+                    continue
+                if dev.index >= torch.cuda.device_count():
+                    continue
+                seen.add(dev.index)
+                devices.append(dev)
+            return devices
+
+        parallel_devices = _parse_requested_devices()
+        if len(parallel_devices) == 0:
+            raise RuntimeError(
+                "No valid CUDA devices were resolved for parallel MCMC. "
+                "Set `parallel_devices` or `parallel_cuda_devices` in the config."
+            )
+
+        # Coalesce all proposals on a single device where MH accept/reject is evaluated.
+        coalesce_device = parallel_devices[0]
+
+        # Build a forcefield bound to the coalesce device when possible.
+        try:
+            forcefield = self.forcefield_partial(
+                temperature=T_low,
+                device_index=coalesce_device.index,
+            )
+        except TypeError:
+            try:
+                forcefield = self.forcefield_partial(
+                    temperature=T_low,
+                    device=str(coalesce_device),
+                )
+            except TypeError:
+                forcefield = self.forcefield_partial(temperature=T_low)
+
+        # Keep source models on CPU and clone to each GPU worker.
+        self.flow = self.flow.to(torch.device("cpu"))
+        self.ebm = self.ebm.to(torch.device("cpu"))
+
+        flow_replicas: Dict[str, nn.Module] = {}
+        ebm_replicas: Dict[str, nn.Module] = {}
+        for device in parallel_devices:
+            flow_replica = copy.deepcopy(self.flow).to(device).eval()
+            ebm_replica = copy.deepcopy(self.ebm).to(device).eval()
+            for param in flow_replica.parameters():
+                param.requires_grad_(False)
+            for param in ebm_replica.parameters():
+                param.requires_grad_(False)
+            flow_replicas[str(device)] = flow_replica
+            ebm_replicas[str(device)] = ebm_replica
+
+        def _split_batch_sizes(total: int, n_chunks: int) -> List[int]:
+            base, remainder = divmod(total, n_chunks)
+            return [base + (1 if i < remainder else 0) for i in range(n_chunks)]
+
+        def _propose_chunk(batch_size: int, device: torch.device) -> Tuple[Tensor, Tensor]:
+            if batch_size == 0:
+                y_empty = torch.empty(
+                    (0, self.mcmc.molecule.n_atoms, 3),
+                    device=coalesce_device,
+                )
+                q_empty = torch.empty((0,), device=coalesce_device)
+                return y_empty, q_empty
+
+            torch.cuda.set_device(device)
+            flow_model = flow_replicas[str(device)]
+            ebm_model = ebm_replicas[str(device)]
+
+            # Each worker independently samples from the flow and scores with EBM.
+            y_chunk = self.interpolant.ode_integrate(
+                mol=self.mcmc.molecule,
+                batch_size=batch_size,
+                n_timesteps=self.mcmc.n_timesteps,
+                model=flow_model,
+                **self.mcmc.sampling_kwargs,
+            )
+            log_q_chunk = evaluate_log_q(y_chunk, self.mcmc.molecule, ebm_model, flush_cache=False)
+
+            # Move proposal payload to the coalesce device for MH.
+            y_chunk = y_chunk.to(coalesce_device, non_blocking=True)
+            log_q_chunk = log_q_chunk.to(coalesce_device, non_blocking=True)
+            torch.cuda.synchronize(device)
+            return y_chunk, log_q_chunk
+
+        def _parallel_propose(pool: ThreadPoolExecutor) -> ProposalState:
+            chunk_sizes = _split_batch_sizes(self.mcmc.n_chains, len(parallel_devices))
+            active = [(i, dev, size) for i, (dev, size) in enumerate(zip(parallel_devices, chunk_sizes)) if size > 0]
+            if len(active) == 0:
+                raise RuntimeError("No active chunks were created for parallel proposal generation.")
+
+            ordered_outputs = []
+            futures = [
+                (i, pool.submit(_propose_chunk, size, dev))
+                for i, dev, size in active
+            ]
+            for chunk_idx, future in futures:
+                y_chunk, log_q_chunk = future.result()
+                ordered_outputs.append((chunk_idx, y_chunk, log_q_chunk))
+            ordered_outputs.sort(key=lambda item: item[0])
+
+            proposal_y = torch.cat([item[1] for item in ordered_outputs], dim=0)
+            proposal_log_q = torch.cat([item[2] for item in ordered_outputs], dim=0)
+
+            # Evaluate log_p on the coalesce device so MH can run in one place.
+            proposal_log_p = forcefield(
+                angstrom_to_nm(
+                    proposal_y.reshape(-1, self.mcmc.molecule.n_atoms * 3)
+                ),
+                return_force=False,
+            ).to(coalesce_device)
+
+            return ProposalState(
+                y=proposal_y,
+                log_p=proposal_log_p,
+                log_q=proposal_log_q,
+            )
+
+        pool = ThreadPoolExecutor(max_workers=len(parallel_devices))
+        try:
+            # Initialize chain state using the same flow proposal distribution.
+            log.log(20, "Initializing chains in parallel...")
+            init = _parallel_propose(pool)
+            chains = ChainState(
+                x=init.y.clone(),
+                log_p=init.log_p.clone(),
+                log_q=init.log_q.clone(),
+            )
+            log.log(20, "Chains initialized.")
+
+            # Main IMH loop (same logic as run_single, but with parallel proposal generation).
+            log.log(20, "Running Monte Carlo Annealing in parallel...")
+            for _ in tqdm(range(self.config.n_steps), desc="Running Monte Carlo Annealing"):
+                proposal = _parallel_propose(pool)
+                log_alpha = self.mcmc.log_acceptance_ratio(chains, proposal)
+                accept_mask = self.mcmc.accept_reject(log_alpha)
+                chains = chains.update_chain(proposal, accept_mask)
+
+                if self.config.run_diagnostics:
+                    self.diagnostics["log_acceptance_rate"].append(log_alpha.mean().item())
+                    self.diagnostics["log_w_variance"].append(
+                        variance_log_w(chains.log_w()).item()
+                    )
+
+            log.log(20, "Parallel Monte Carlo Annealing completed.")
+            return chains.cpu()
+        finally:
+            pool.shutdown(wait=False)
+            del flow_replicas, ebm_replicas
+            torch.cuda.empty_cache()
+            gc.collect()
