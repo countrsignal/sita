@@ -15,7 +15,7 @@ import mdtraj as md
 import torch
 from lightning.pytorch.loggers import WandbLogger
 
-from .inference_utils import adp_torsion_angles, map_chirality_batch, estimate_fes
+from .inference_utils import adp_torsion_angles, map_adp_chirality_batch, estimate_fes
 
 
 def clean_up_plots(func):
@@ -293,7 +293,7 @@ def adp_free_energy_profile(
     if len(samples.shape) == 2:
         samples = samples.reshape(-1, 22, 3)
 
-    samples_mapped = map_chirality_batch(samples)
+    samples_mapped = map_adp_chirality_batch(samples)
     traj_samples4 = md.Trajectory(samples_mapped, topology=md.load_topology(pdb_path))
 
     phi = md.compute_phi(traj_samples4)[1].flatten()

@@ -13,7 +13,7 @@ from tqdm import tqdm
 import networkx as nx
 import networkx.algorithms.isomorphism as iso
 
-from .data import Molecule
+from .data.molecule import Molecule
 from .utils.data_utils import angstrom_to_nm
 from .utils.inference_utils import map_adp_chirality_batch
 
@@ -129,9 +129,9 @@ def fix_chirality(samples, adj_list, atom_types, data, dim):
         symmetry_change = np.zeros(len(samples), dtype=bool)
         return samples, symmetry_change
     reference_signs = compute_chirality_sign(torch.from_numpy(data.reshape(-1, dim//3, 3))[[1]], chirality_centers)
-    symmetry_change = check_symmetry_change(samples, chirality_centers, reference_signs)
+    symmetry_change = check_symmetry_change(torch.from_numpy(samples.reshape(-1, dim//3, 3)), chirality_centers, reference_signs)
     samples[symmetry_change] *=-1
-    symmetry_change = check_symmetry_change(samples, chirality_centers, reference_signs)
+    symmetry_change = check_symmetry_change(torch.from_numpy(samples.reshape(-1, dim//3, 3)), chirality_centers, reference_signs)
     print(f"Correct symmetry rate {(~symmetry_change).sum()/len(samples)}")
     return samples, symmetry_change
 
