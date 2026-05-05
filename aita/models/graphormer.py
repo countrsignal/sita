@@ -266,12 +266,12 @@ class Graphormer3D(nn.Module):
         ########################################################################
         # NOTE: this layer should not exist but remains here for backwards compatibility
         ########################################################################
-        self.bias_updates=nn.ModuleList([
-            NodeTaskHead(
-                embed_dim,
-                attention_heads,
-            ) for _ in range(num_layers)
-        ])
+        # self.bias_updates=nn.ModuleList([
+        #     NodeTaskHead(
+        #         embed_dim,
+        #         attention_heads,
+        #     ) for _ in range(num_layers)
+        # ])
         ########################################################################
 
         self.final_ln = nn.LayerNorm(embed_dim)

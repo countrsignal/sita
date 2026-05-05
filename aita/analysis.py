@@ -193,6 +193,7 @@ def process_generated_samples(
     mol: Molecule,
     samples: torch.Tensor,
     ref_samples: Optional[torch.Tensor] = None,
+    log_weights: Optional[torch.Tensor] = None,
 ):
     """
     Process generated samples.
@@ -201,6 +202,7 @@ def process_generated_samples(
         mol: Molecule
         samples: Generated samples
         ref_samples: Reference samples
+        log_weights: Log weights of the samples
     """
     if mol.name == "alanine_dipeptide":
         return map_adp_chirality_batch(samples.numpy())
@@ -221,6 +223,13 @@ def process_generated_samples(
     x_ref_np = ref_samples.view(-1, mol.n_atoms, 3).numpy()
     x_np = angstrom_to_nm(samples.view(-1, mol.n_atoms, 3)).numpy()
 
-    aligned_samples, _ = align_samples(x_np, adj_list, mol.n_atoms * 3, atom_types, scaling=1.0)
+    aligned_samples, aligned_idxs = align_samples(x_np, adj_list, mol.n_atoms * 3, atom_types, scaling=1.0)
+    if log_weights is not None:
+        log_weights = log_weights[aligned_idxs]
+
     aligned_samples, symmetry_change = fix_chirality(aligned_samples, adj_list, atom_types, x_ref_np, mol.n_atoms * 3)
-    return as_numpy(aligned_samples)[~symmetry_change]
+
+    if log_weights is not None:
+        return as_numpy(aligned_samples)[~symmetry_change], log_weights[~symmetry_change]
+    else:
+        return as_numpy(aligned_samples)[~symmetry_change]
