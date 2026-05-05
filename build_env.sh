@@ -8,7 +8,7 @@ eval "$(micromamba shell hook --shell=bash)"
 micromamba create -f environment.yaml
 
 # activate the environment
-micromamba activate aita
+micromamba activate sita
 
 # install the dependencies
 # > micromamba
