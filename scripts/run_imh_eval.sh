@@ -8,14 +8,14 @@
 #SBATCH --mem=100G
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=dap181@pitt.edu
-#SBATCH --output=/net/pulsar/home/koes/dap181/labspace/aita/scripts/logs/atp-imh-eval-12345.out
+#SBATCH --output=/net/pulsar/home/koes/dap181/labspace/sita/scripts/logs/atp-imh-eval-12345.out
 
 
 ############################
 ##       Environment      ##
 ############################
 eval "$(micromamba shell hook --shell=bash)"
-micromamba activate aita
+micromamba activate sita
 
 ############################
 ##         Globals        ##

@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=AITA_anneal_adp
+#SBATCH --job-name=SITA_anneal_adp
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:1
 #SBATCH --ntasks-per-node=2
@@ -9,14 +9,14 @@
 #SBATCH --mem=100G
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=dap181@pitt.edu
-#SBATCH --output=/net/pulsar/home/koes/dap181/labspace/aita/scripts/logs/aita-anneal-adp.out
+#SBATCH --output=/net/pulsar/home/koes/dap181/labspace/sita/scripts/logs/sita-anneal-adp.out
 
 
 ############################
 ##       Environment      ##
 ############################
 eval "$(micromamba shell hook --shell=bash)"
-micromamba activate aita
+micromamba activate sita
 
 
 ############################

@@ -18,11 +18,11 @@ from lightning import Callback, Trainer
 rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
 
 
-from aita.training.annealers import AnnealerADP
-from aita.training.common import fetch_wandb_logger
-from aita.utils.logging import RankedLogger
-from aita.utils.configs import print_config
-from aita.utils.training import (
+from sita.training.annealers import AnnealerADP
+from sita.training.common import fetch_wandb_logger
+from sita.utils.logging import RankedLogger
+from sita.utils.configs import print_config
+from sita.utils.training import (
     task_wrapper,
     instantiate_loggers,
     instantiate_callbacks,

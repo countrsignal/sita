@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=AITA_pretrain_ebm
+#SBATCH --job-name=SITA_pretrain_ebm
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:1
 #SBATCH --ntasks-per-node=2
@@ -9,14 +9,14 @@
 #SBATCH --mem=100G
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=dap181@pitt.edu
-#SBATCH --output=/net/pulsar/home/koes/dap181/labspace/aita/scripts/logs/aita-pretrain-ebm-atp-pita.out
+#SBATCH --output=/net/pulsar/home/koes/dap181/labspace/sita/scripts/logs/sita-pretrain-ebm-atp-pita.out
 
 
 ############################
 ##       Environment      ##
 ############################
 eval "$(micromamba shell hook --shell=bash)"
-micromamba activate aita
+micromamba activate sita
 
 
 ############################
