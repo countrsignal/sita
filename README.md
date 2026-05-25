@@ -1,4 +1,4 @@
-# aita
+# sita
 
 ## Prerequisites
 
@@ -13,7 +13,7 @@ From the root of this repository:
 2. Run the build script (it stops on the first error):
 
    ```bash
-   cd /path/to/aita
+   cd /path/to/sita
    bash build_env.sh
    ```
 
@@ -52,7 +52,7 @@ Ensure the log directory in `#SBATCH --output=...` exists (e.g. `sim_scripts/log
 With the edits saved and your account configured for SLURM:
 
 ```bash
-cd /path/to/aita
+cd /path/to/sita
 sbatch sim_scripts/run_md_adp.sh
 ```
 
@@ -65,7 +65,7 @@ To verify OpenMM and the environment on a single machine with a GPU, you can run
 ```bash
 eval "$(micromamba shell hook --shell=bash)"
 micromamba activate sita
-cd /path/to/aita
+cd /path/to/sita
 
 OUT_DIR="sim_scripts/output/adp_test"
 mkdir -p "$OUT_DIR"
@@ -102,10 +102,10 @@ Edit `#SBATCH` options in `scripts/run_jump_anneal_adp.sh` for your site: `parti
 
 ### 4. Submit from the repository root
 
-The script sets `PROJECT_ROOT` from `SLURM_SUBMIT_DIR` when running under SLURM, so the working directory used at submit time must be the **aita** repository root (where `jump_anneal.py` lives):
+The script sets `PROJECT_ROOT` from `SLURM_SUBMIT_DIR` when running under SLURM, so the working directory used at submit time must be the **sita** repository root (where `jump_anneal.py` lives):
 
 ```bash
-cd /path/to/aita
+cd /path/to/sita
 sbatch scripts/run_jump_anneal_adp.sh
 ```
 
@@ -118,7 +118,7 @@ From the repo root with the same environment:
 ```bash
 eval "$(micromamba shell hook --shell=bash)"
 micromamba activate sita
-cd /path/to/aita
+cd /path/to/sita
 
 echo "WANDB_ENTITY='your_wandb_entity'" > .env
 
