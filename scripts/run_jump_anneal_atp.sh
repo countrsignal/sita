@@ -30,7 +30,7 @@ else
     PROJECT_ROOT=$(dirname "$SCRIPT_DIR")
 fi
 
-PRETRAIN_SCRIPT="$PROJECT_ROOT/jump_anneal.py"
+ANNEAL_SCRIPT="$PROJECT_ROOT/jump_anneal.py"
 
 cd "$PROJECT_ROOT"
 
@@ -44,7 +44,7 @@ echo "WANDB_ENTITY='${USERNAME}'" > .env
 ## Launch Training Script ##
 ############################
 echo "Launching training script..."
-python "$PRETRAIN_SCRIPT" experiment=anneal_atp_jump_prior \
+python "$ANNEAL_SCRIPT" experiment=anneal_atp_jump_prior \
         trainer.max_epochs=200
 
 echo "Training COMPLETE."
