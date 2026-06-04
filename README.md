@@ -1,4 +1,6 @@
-# sita
+# SITA
+
+This repository accompanies the paper [Scalable Inference-Time Annealing with Surrogate Likelihood Estimators](https://arxiv.org/abs/2605.31498) (Peñaherrera, Aggarwal, and Koes).
 
 ## Prerequisites
 
