@@ -51,9 +51,7 @@ dependencies:
       - git+https://github.com/atong01/bgflow.git
       - scipy
       - scikit-learn
-      - matplotlib<3.10 #3.10 gives
-      # dit requires
-      # --no-build-isolation flash-attn
+      - matplotlib<3.10
       - deeptime
       - huggingface_hub
       - openmm[cuda12]
