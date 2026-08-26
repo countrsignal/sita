@@ -1,4 +1,4 @@
-_target_: aita.energies.alp_energy.ALPEnergy
+_target_: sita.energies.alp_energy.ALPEnergy
 _partial_: true
 data_path: ${paths.data_dir}
 pdb_filename: alanine_tripeptide.pdb

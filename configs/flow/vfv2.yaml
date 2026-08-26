@@ -1,4 +1,4 @@
-_target_: aita.models.vector_field_v2.VFV2
+_target_: sita.models.vector_field_v2.VFV2
 n_vec: 32
 n_features: null
 edge_feat_size: 9

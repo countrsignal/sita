@@ -6,7 +6,7 @@ import dgl.function as fn
 from typing import Union, Optional, Type
 
 # Import helpers from the original file
-from aita.models.layers.gvp import (
+from .gvp import (
     _norm_no_nan,
     _rbf,
     GVPDropout,
