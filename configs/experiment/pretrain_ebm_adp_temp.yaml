@@ -55,6 +55,7 @@ flow_samples_path: null
 ebm_inspection_interval: 50
 
 sample_from_flow:
+  ode_sampler: true # NOTE: FALSE FOR SDE SAMPLING!
   output_path: ${paths.output_dir}/alanine_dipeptide_samples.npy
   pdb_path: ${paths.data_dir}/debug/alanine_dipeptide.pdb
   n_samples: 200_000

@@ -111,7 +111,7 @@ def simulate_ou_forward_reverse(
     return z, log_p_fwd, log_p_bwd
 
 
-@torch.no_grad()
+@torch.inference_mode()
 def sde_integrate_heun(
     x_init: torch.Tensor,
     times: torch.Tensor,

@@ -10,10 +10,12 @@ from tqdm import tqdm
 from abc import ABC, abstractmethod
 from typing import Dict, List, Any, Tuple
 
+from ..plans import Plan
 from ..data.molecule import Molecule
 from ..interpolants import Interpolant
 from ..utils.logging import RankedLogger
 from ..utils.data_utils import angstrom_to_nm
+from ..diffusion import sde_integrate_heun, MeanFreePrior
 from ..energies.base_molecule_energy_function import BaseMoleculeEnergy
 
 
@@ -143,6 +145,68 @@ class Pipeline:
         results_dict[mol.name] = {"samples": torch.cat(samples_th, dim=0)}
         return results_dict
 
+    @staticmethod
+    def generate_from_flow_sde(
+        n_samples: int,
+        samples_per_batch: int,
+        n_timesteps: int,
+        molecule: Molecule,
+        flow_model: torch.nn.Module,
+        plan: Plan,
+    ) -> Dict[str, Dict[str, torch.Tensor]]:
+
+        """
+        Generate samples by converting the flow model into a diffusion model and then sampling the SDE.
+        """
+        assert n_samples % samples_per_batch == 0, "`n_samples` must be divisible by `samples_per_batch`"
+        n_batches = n_samples // samples_per_batch
+
+        # model device
+        device = next(flow_model.parameters()).device
+
+        # create a graph with the given categorical features
+        # we should have a batch size of batch_size * num_nodes
+        g = molecule.inference_graph_setup(samples_per_batch)
+
+        # create a mean free prior
+        prior = MeanFreePrior(
+            n_particles=molecule.n_atoms,
+            spatial_dim=3,
+            scale=1.0,
+            device="cpu",
+        )
+
+        # prepare time variables
+        time_span = torch.linspace(0.0, 1.0, n_timesteps + 1)
+
+        # move data to device
+        g = g.to(device)
+        time_span = time_span.to(device)
+
+        # initialize list of samples
+        samples_th = []
+        results_dict: Dict[str, torch.Tensor] = {}
+        for _ in tqdm(range(n_batches), desc=f"Generating samples for {molecule.name}"):
+            
+            # prepare initial state
+            x_init = prior.sample(samples_per_batch)
+            x_init = x_init.to(device)
+
+            # integrate the SDE
+            batch_samples, *_ = sde_integrate_heun(
+                x_init=x_init,
+                times=time_span,
+                graph=g,
+                vector_field=flow_model,
+                plan=plan,
+                simulate_generative=True,
+                beta=1.0,
+                zeta=1.0,
+            )
+            samples_th.append(batch_samples)
+
+        results_dict[molecule.name] = {"samples": torch.cat(samples_th, dim=0).view(n_samples, molecule.n_atoms, 3)}
+        return results_dict
 
     @staticmethod
     def evaluate_log_probs(

@@ -1,6 +1,7 @@
 import gc
 import numpy as np
 from tqdm import trange
+from functools import partial
 
 import hydra
 from omegaconf import DictConfig
@@ -127,17 +128,30 @@ class PreTrainerEBM(LightningModule):
             flow_plan = hydra.utils.instantiate(self.hparams.plans.flow_plan)
             interpolant = hydra.utils.instantiate(self.hparams.interpolant)(plan=flow_plan)
 
+            # NOTE: Now we check if we are using the ODE sampler or the SDE sampler
+            if self.hparams.sample_from_flow.ode_sampler:
+                sampler_method = partial(
+                    Pipeline.generate_from_flow,
+                    n_samples=self.hparams.sample_from_flow.n_samples,
+                    samples_per_batch=self.hparams.sample_from_flow.samples_per_batch,
+                    n_timesteps=self.hparams.sample_from_flow.n_timesteps,
+                    molecules=[mol],
+                    interpolant=interpolant,
+                    method=self.hparams.sample_from_flow.method,
+                )
+            else:
+                sampler_method = partial(
+                    Pipeline.generate_from_flow_sde,
+                    n_samples=self.hparams.sample_from_flow.n_samples,
+                    samples_per_batch=self.hparams.sample_from_flow.samples_per_batch,
+                    n_timesteps=self.hparams.sample_from_flow.n_timesteps,
+                    molecule=mol,
+                    plan=flow_plan,
+                )
+
             log.log(20, "Generating synthetic data from the flow model...")
             mol = self.dataset.molecules[self.dataset.pdb_id]
-            res_dict = Pipeline.generate_from_flow(
-                n_samples=self.hparams.sample_from_flow.n_samples,
-                samples_per_batch=self.hparams.sample_from_flow.samples_per_batch,
-                n_timesteps=self.hparams.sample_from_flow.n_timesteps,
-                molecules=[mol],
-                flow_model=flow_model,
-                interpolant=interpolant,
-                method=self.hparams.sample_from_flow.method,
-            )
+            res_dict = sampler_method(flow_model=flow_model)
             log.log(20, "Data generation completed.")
 
             # update dataset with the new samples

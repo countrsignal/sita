@@ -4,12 +4,12 @@
 #SBATCH --gres=gpu:1
 #SBATCH --ntasks-per-node=2
 #SBATCH --exclude=g016,g017,g018
-#SBATCH --time=5-0:00:00
+#SBATCH --time=3-0:00:00
 #SBATCH --partition=koes_gpu
 #SBATCH --mem=100G
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=dap181@pitt.edu
-#SBATCH --output=/net/pulsar/home/koes/dap181/labspace/sita/scripts/logs/sita-pretrain-ebm-atp-pita.out
+#SBATCH --output=/net/pulsar/home/koes/dap181/labspace/sita/scripts/logs/sita-pretrain-ebm-atp-sde.out
 
 
 ############################
@@ -46,7 +46,7 @@ echo "WANDB_ENTITY='${USERNAME}'" > .env
 ############################
 echo "Launching training script..."
 # python "$PRETRAIN_SCRIPT" experiment=pretrain_ebm_adp_temp trainer.max_epochs=500
-python "$PRETRAIN_SCRIPT" experiment=pretrain_ebm_atp_temp trainer.max_epochs=500 loader.batch_size=512
+python "$PRETRAIN_SCRIPT" experiment=pretrain_ebm_atp_sde trainer.max_epochs=500 loader.batch_size=512
 
 echo "Training COMPLETE."
 exit 0
