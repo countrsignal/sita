@@ -2,6 +2,9 @@
 
 This repository accompanies the paper [Scalable Inference-Time Annealing with Surrogate Likelihood Estimators](https://arxiv.org/abs/2605.31498) (Peñaherrera, Aggarwal, and Koes).
 
+## Dataset
+Data underlying the training and evaluation of models in SITA are made available on Zenodo (DOI: https://doi.org/10.5281/zenodo.23607512). The dataset is composed of PDB and DCD files for both Alanine Dipeptide and Alanine Tripeptide at various temperature. This repository also provides scripts for users to generate their own molecular dynamics trajectory data.
+
 ## Prerequisites
 
 - [micromamba](https://mamba.readthedocs.io/en/latest/installation/micromamba-installation.html) (the build script uses the `micromamba` CLI)
