@@ -1,0 +1,157 @@
+================================================================================
+WASSERSTEIN-2 METRIC COMPUTATION FLOW FOR ALANINE DIPEPTIDE TORSION ANGLES
+================================================================================
+
+INPUT: Cartesian Coordinates (samples)
+    ↓
+    │ Shape: [batch, 22, 3] or [batch*22*3]
+    │ 22 atoms of alanine dipeptide in 3D space
+    ↓
+
+STEP 1: Chirality Mapping (map_chirality_batch)
+────────────────────────────────────────────────
+    │ Location: aita/utils/inference_utils.py:119-149
+    │
+    ├─→ Extract carbon atoms (indices: 1, 10, 18)
+    ├─→ Identify C-beta atom based on distances
+    ├─→ Calculate chirality using cross product
+    │   (backbone + C-beta atoms)
+    ├─→ Flip D-chirality samples (multiply by -1)
+    │
+    ↓ Output: Chirality-corrected samples [batch, 22, 3]
+
+STEP 2: Create MDTraj Trajectory (adp_torsion_angles)
+──────────────────────────────────────────────────────
+    │ Location: aita/utils/inference_utils.py:152-157
+    │
+    ├─→ Load PDB topology
+    ├─→ Create Trajectory object
+    │
+    ↓ MDTraj Trajectory object
+
+STEP 3: Compute Dihedral Angles
+────────────────────────────────
+    │ Using: md.compute_dihedrals()
+    │
+    ├─→ φ (phi) angle: atoms [4, 6, 8, 14]
+    ├─→ ψ (psi) angle: atoms [6, 8, 14, 16]
+    │
+    ↓ Output: Torsion angles [batch, 2]
+    │         Column 0: φ angles
+    │         Column 1: ψ angles
+
+STEP 4: Compute Pairwise Distances (calc_torsion_w2)
+─────────────────────────────────────────────────────
+    │ Location: aita/utils/inference_utils.py:225-243
+    │ Inputs: gen_angles [N, 2], holdout_angles [M, 2]
+    │
+    ├─→ Expand dimensions for broadcasting
+    │   gen_angles: [1, N, 2]
+    │   holdout_angles: [M, 1, 2]
+    │
+    ├─→ Compute differences: [M, N, 2]
+    │
+    ├─→ Apply periodic boundary (mod π)
+    │   dist = (diff % π)²
+    │
+    ├─→ Sum over angle dimensions
+    │
+    ↓ Output: Distance matrix [M, N]
+
+STEP 5: Optimal Transport Computation
+──────────────────────────────────────
+    │ Using: Python Optimal Transport (POT) library
+    │
+    ├─→ Create uniform weights
+    │   a = uniform_weights(N)
+    │   b = uniform_weights(M)
+    │
+    ├─→ Solve optimal transport problem
+    │   W² = ot.emd2(a, b, dist_matrix, numItermax=1e9)
+    │
+    │   This solves:
+    │   min_{γ} Σᵢⱼ dist[i,j] · γ[i,j]
+    │   subject to: Σⱼ γ[i,j] = a[i]
+    │                Σᵢ γ[i,j] = b[j]
+    │                γ[i,j] ≥ 0
+    │
+    ↓ Output: Squared Wasserstein-2 distance (scalar)
+
+STEP 6: Take Square Root
+─────────────────────────
+    │ W₂ = √(W²)
+    │
+    ↓ OUTPUT: Wasserstein-2 metric (float)
+
+
+================================================================================
+ALTERNATIVE: Torus Wasserstein (for proper circular distance)
+================================================================================
+
+STEP 4 (Alternative): Wrapped Distance Computation
+───────────────────────────────────────────────────
+    │ Location: aita/utils/inference_utils.py:246-257
+    │
+    ├─→ Broadcast angles
+    ├─→ Compute wrapped distance:
+    │   d = min(|θ₁-θ₂|, 2π-|θ₁-θ₂|)
+    │
+    ├─→ Square and sum: d²
+    │
+    ↓ Continue to STEP 5 (same as above)
+
+
+================================================================================
+KEY LIBRARIES USED
+================================================================================
+
+1. NumPy: Array operations and numerical computations
+2. MDTraj: Molecular dynamics trajectory analysis
+   - Load PDB topology
+   - Compute dihedral angles
+3. POT (Python Optimal Transport): Wasserstein distance computation
+   - ot.unif(): Create uniform distributions
+   - ot.emd2(): Earth Mover's Distance (squared)
+4. SciPy: General scientific computing utilities
+
+
+================================================================================
+MATHEMATICAL FORMULATION
+================================================================================
+
+Wasserstein-2 distance:
+W₂(P,Q) = [min_{γ∈Γ(P,Q)} ∫∫ ‖x-y‖² dγ(x,y)]^(1/2)
+
+For discrete uniform distributions:
+W₂ = [min_{Γ} (1/N²) Σᵢⱼ d²(xᵢ,yⱼ) · Γᵢⱼ]^(1/2)
+
+where:
+- P, Q: Probability distributions over torsion angles
+- Γ: Transport plan (coupling matrix)
+- d(x,y): Distance between torsion angle pairs
+- For calc_torsion_w2: d²(x,y) = Σₖ((xₖ-yₖ) mod π)²
+- For torus_wasserstein: d(x,y) = min(|x-y|, 2π-|x-y|)
+
+
+================================================================================
+FILE LOCATIONS
+================================================================================
+
+Main Implementation:
+- aita/utils/inference_utils.py
+  ├─ adp_torsion_angles() [lines 152-157]
+  ├─ map_chirality_batch() [lines 119-149]
+  ├─ calc_torsion_w2() [lines 225-243]
+  └─ torus_wasserstein() [lines 246-257]
+
+Supporting Functions:
+- aita/models/components/distribution_distances.py
+  └─ wasserstein() [lines 13-42] (general purpose, not for angles)
+
+Visualization:
+- aita/utils/plotting.py
+  ├─ adp_ramachandran_plot() [lines 209-259]
+  └─ adp_free_energy_profile() [lines 263-349]
+
+
+================================================================================
